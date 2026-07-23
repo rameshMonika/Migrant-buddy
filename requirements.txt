@@ -1,0 +1,12 @@
+requests
+trafilatura
+ipykernel
+pandas 
+tabulate
+sentence-transformers
+numpy
+chromadb
+rank_bm25
+ragas
+langchain-ollama
+langchain-huggingface 

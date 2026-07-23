@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "migrantbuddy"
+version = "0.1.0"
+description = "RAG system for SG migrants -- answers questions grounded in migrant-relevant documents (work pass rules, MOM guidelines, support services, etc.)."
+requires-python = ">=3.12"
+dependencies = [
+    "requests",
+    "trafilatura",
+    "pandas",
+    "tabulate",
+    "sentence-transformers",
+    "numpy",
+    "chromadb",
+    "rank_bm25",
+    "ragas",
+    "langchain-ollama",
+    "langchain-huggingface",
+    "fastapi",
+    "uvicorn",
+    "langfuse",
+    "python-dotenv",
+    "langgraph",
+    "langchain-core",
+    "langgraph-checkpoint-redis",
+    "redis",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "ruff",
+    "black",
+    "ipykernel",
+    "httpx",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.black]
+line-length = 100
+target-version = ["py312"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

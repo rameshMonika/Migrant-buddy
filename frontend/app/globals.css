@@ -1,0 +1,35 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, -apple-system, sans-serif;
+  color: #1a1a1a;
+  background: #fff;
+}
+
+/* Generated answers are rendered as markdown (react-markdown + remark-gfm) --
+   browser defaults for p/ul/table margins look odd packed into a small chat
+   bubble, and tables have no visible borders by default. */
+.markdown-content p {
+  margin: 0 0 8px;
+}
+.markdown-content p:last-child {
+  margin-bottom: 0;
+}
+.markdown-content ul,
+.markdown-content ol {
+  margin: 0 0 8px;
+  padding-left: 20px;
+}
+.markdown-content table {
+  border-collapse: collapse;
+  margin: 8px 0;
+}
+.markdown-content th,
+.markdown-content td {
+  border: 1px solid #ccc;
+  padding: 4px 8px;
+  text-align: left;
+}

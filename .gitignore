@@ -1,0 +1,14 @@
+# Environments
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Secrets -- see .env.example for the expected keys
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Project data (raw docs, eval sets — not source-controlled)
+data/
