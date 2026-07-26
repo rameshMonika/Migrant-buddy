@@ -1,12 +1,16 @@
-"""POST /chat -- the single endpoint the frontend calls. ConversationService
-is resolved from app.state (set up in main.py at startup) rather than
-constructed here, so tests can swap in a fake ConversationService via
-FastAPI's dependency_overrides without touching real models/Chroma/Ollama.
+"""POST /chat -- the single endpoint the frontend calls to send a message.
+ConversationService is resolved from app.state (set up in main.py at
+startup) rather than constructed here, so tests can swap in a fake
+ConversationService via FastAPI's dependency_overrides without touching
+real models/Chroma/Ollama.
 
 Rate limiting (get_rate_limiter) is optional -- returns None unless main.py
 set up app.state.rate_limiter (RATE_LIMIT_ENABLED), in which case /chat is
 skipped entirely and behaves exactly as before. Only /chat is
 rate-limited, not /health -- a liveness check should always succeed.
+
+Speech-to-text lives in its own standalone service (migrantbuddy.speech.main),
+not here -- see that module's routes.py for /transcribe/ws.
 
 GET /health is a plain liveness check -- confirms the server process is up
 and routing works, independent of ConversationService/Chroma/Ollama being
@@ -17,9 +21,9 @@ would be a separate endpoint if that's ever needed.
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 
-from migrantbuddy.api.rate_limit import RateLimiter
 from migrantbuddy.api.schemas import ChatRequest, ChatResponse
 from migrantbuddy.rag import ConversationService
+from migrantbuddy.rate_limit import RateLimiter
 
 router = APIRouter()
 
@@ -30,6 +34,13 @@ def get_conversation_service(request: Request) -> ConversationService:
 
 def get_rate_limiter(request: Request) -> RateLimiter | None:
     return getattr(request.app.state, "rate_limiter", None)
+
+
+def _check_rate_limit(request: Request, rate_limiter: RateLimiter | None) -> None:
+    if rate_limiter is not None:
+        client_key = request.client.host if request.client else "unknown"
+        if not rate_limiter.is_allowed(client_key):
+            raise HTTPException(status_code=429, detail="Too many requests -- please wait a moment and try again.")
 
 
 @router.get("/health")
@@ -44,10 +55,7 @@ def chat(
     conversation_service: ConversationService = Depends(get_conversation_service),
     rate_limiter: RateLimiter | None = Depends(get_rate_limiter),
 ) -> ChatResponse:
-    if rate_limiter is not None:
-        client_key = request.client.host if request.client else "unknown"
-        if not rate_limiter.is_allowed(client_key):
-            raise HTTPException(status_code=429, detail="Too many requests -- please wait a moment and try again.")
+    _check_rate_limit(request, rate_limiter)
 
     result = conversation_service.answer(chat_request.thread_id, chat_request.message)
     return ChatResponse(

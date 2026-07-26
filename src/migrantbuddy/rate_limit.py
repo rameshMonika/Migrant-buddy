@@ -1,7 +1,8 @@
-"""Redis-backed rate limiting (fixed-window INCR+EXPIRE) for /chat --
-protects the single Ollama/vLLM backend from being overwhelmed by rejecting
-excess requests cleanly (429) instead of letting them queue up and time
-out. See migrantbuddy.config for the tunables and the fail-open rationale.
+"""Redis-backed rate limiting (fixed-window INCR+EXPIRE) -- shared by the RAG
+service (/chat) and the Whisper service (/transcribe/ws), each configuring
+and instantiating its own RateLimiter with its own budget (see
+migrantbuddy.config for the tunables and the fail-open rationale). Lives
+here rather than under api/ since it isn't specific to either service.
 
 Fails open: a Redis error is treated as "allow the request" -- rate
 limiting is a protective measure, not a correctness requirement, and

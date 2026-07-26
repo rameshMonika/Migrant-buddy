@@ -128,6 +128,28 @@ RATE_LIMIT_ENABLED = os.getenv("MIGRANTBUDDY_RATE_LIMIT_ENABLED", "false").lower
 RATE_LIMIT_MAX_REQUESTS = int(os.getenv("MIGRANTBUDDY_RATE_LIMIT_MAX_REQUESTS", "10"))
 RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("MIGRANTBUDDY_RATE_LIMIT_WINDOW_SECONDS", "60"))
 
+# Rate limiting for the standalone Whisper service's /transcribe/ws -- same
+# fixed-window Redis INCR+EXPIRE mechanism as RATE_LIMIT_* above, but its own
+# toggle/budget since transcription (CPU-bound Whisper inference) and chat
+# generation (Ollama/vLLM) are separate services with separate capacity, not
+# one shared budget.
+WHISPER_RATE_LIMIT_ENABLED = os.getenv("MIGRANTBUDDY_WHISPER_RATE_LIMIT_ENABLED", "false").lower() == "true"
+WHISPER_RATE_LIMIT_MAX_REQUESTS = int(os.getenv("MIGRANTBUDDY_WHISPER_RATE_LIMIT_MAX_REQUESTS", "10"))
+WHISPER_RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("MIGRANTBUDDY_WHISPER_RATE_LIMIT_WINDOW_SECONDS", "60"))
+
+# Speech-to-text (faster-whisper) -- "small" balances multilingual accuracy
+# (needs to handle Burmese/Tamil/Thai/Vietnamese etc., where a smaller
+# model like "tiny"/"base" degrades noticeably more) against CPU-only
+# inference speed, since GPU availability on the target machine isn't
+# confirmed. Requires ffmpeg on PATH (used by faster-whisper's audio
+# decoding) -- not a pip package, a separate system install.
+WHISPER_MODEL_SIZE = os.getenv("MIGRANTBUDDY_WHISPER_MODEL_SIZE", "small")
+WHISPER_DEVICE = os.getenv("MIGRANTBUDDY_WHISPER_DEVICE", "cpu")
+# int8 quantization -- meaningfully faster on CPU than float32 with only a
+# small accuracy cost; irrelevant if WHISPER_DEVICE=cuda later (GPU
+# inference would typically use float16 instead).
+WHISPER_COMPUTE_TYPE = os.getenv("MIGRANTBUDDY_WHISPER_COMPUTE_TYPE", "int8")
+
 # Langfuse (observability/tracing) -- deliberately no default keys/host
 # here. Tracing only activates when both keys are set (see
 # migrantbuddy.observability); this app can handle sensitive queries (e.g.

@@ -15,6 +15,11 @@ just "how do I run it."
   ```
   ollama pull aisingapore/Llama-SEA-LION-v3-8B-IT
   ```
+- **ffmpeg**, installed and on your `PATH` — required for speech-to-text
+  (`faster-whisper` uses it to decode the audio the browser records). Not a pip
+  package; install it separately (e.g. `winget install ffmpeg` on Windows, or grab a
+  build from [ffmpeg.org](https://ffmpeg.org/download.html)) and confirm with
+  `ffmpeg -version`.
 
 ## 1. Backend setup
 
@@ -46,17 +51,28 @@ script), so run these in order and let each one finish:
 
 Once these have run, `data/processed/` has everything the backend needs.
 
-## 3. Run the backend API
+## 3. Run the backend services
+
+Two independent services, run as two separate processes -- the RAG service (chat)
+and the Whisper service (speech-to-text) don't depend on each other at runtime, so
+either can be started, stopped, or restarted alone:
 
 ```powershell
-uvicorn migrantbuddy.api.main:app --reload --port 8000
+uvicorn migrantbuddy.api.main:app --reload --port 8000       # RAG (chat)
+uvicorn migrantbuddy.speech.main:app --reload --port 8002    # Whisper (speech-to-text)
 ```
 
-Check it's up:
+(Port 8001 is reserved for vLLM, hence 8002 here.)
+
+Check they're up:
 
 ```powershell
 curl http://localhost:8000/health
+curl http://localhost:8002/health
 ```
+
+Only need voice input? Just skip the second command -- the chat UI works fine
+without the Whisper service running, it just means the 🎤 button won't connect.
 
 ## 4. Run the frontend
 
@@ -67,8 +83,10 @@ copy .env.local.example .env.local
 npm run dev
 ```
 
-Open `http://localhost:3000`. The chat UI calls the backend at
-`NEXT_PUBLIC_API_BASE_URL` (set in `.env.local`, defaults to `http://localhost:8000`).
+Open `http://localhost:3000`. The chat UI calls the RAG service at
+`NEXT_PUBLIC_API_BASE_URL` (set in `.env.local`, defaults to `http://localhost:8000`)
+and the Whisper service directly at `NEXT_PUBLIC_WHISPER_WS_URL` (defaults to
+`ws://localhost:8002/transcribe/ws`) -- there's no proxying between the two.
 
 ## Configuration
 
@@ -101,6 +119,12 @@ etc. — is a fixed architecture decision, not meant to vary by environment):
 | `MIGRANTBUDDY_RATE_LIMIT_ENABLED` | `false` | Rate-limit `/chat` (Redis) — see below |
 | `MIGRANTBUDDY_RATE_LIMIT_MAX_REQUESTS` | `10` | Max requests per client IP per window (only used when `RATE_LIMIT_ENABLED=true`) |
 | `MIGRANTBUDDY_RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate limit window, in seconds (only used when `RATE_LIMIT_ENABLED=true`) |
+| `MIGRANTBUDDY_WHISPER_MODEL_SIZE` | `small` | Whisper model size for speech-to-text (`tiny`/`base`/`small`/`medium`/`large-v3`, etc.) — see below |
+| `MIGRANTBUDDY_WHISPER_DEVICE` | `cpu` | `cpu` or `cuda` — set to `cuda` if you have an NVIDIA GPU |
+| `MIGRANTBUDDY_WHISPER_COMPUTE_TYPE` | `int8` | faster-whisper quantization — `int8` is fastest on CPU; use `float16` with `cuda` |
+| `MIGRANTBUDDY_WHISPER_RATE_LIMIT_ENABLED` | `false` | Rate-limit the Whisper service's `/transcribe/ws` (Redis) — own toggle/budget, separate from `/chat`'s |
+| `MIGRANTBUDDY_WHISPER_RATE_LIMIT_MAX_REQUESTS` | `10` | Max connections per client IP per window (only used when `WHISPER_RATE_LIMIT_ENABLED=true`) |
+| `MIGRANTBUDDY_WHISPER_RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate limit window, in seconds (only used when `WHISPER_RATE_LIMIT_ENABLED=true`) |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST` | unset (tracing off) | Enables Langfuse tracing when **all three** are set — see below |
 
 ### Conversational memory backend
@@ -135,6 +159,20 @@ exceeded. This exists because Ollama/vLLM can't meaningfully serve concurrent re
 (generation is CPU/GPU-bound) — an unbounded burst would otherwise just queue up and
 time out ugly instead of failing cleanly. Like the retrieval cache, this fails open: a
 Redis error allows the request through rather than locking everyone out.
+
+### Speech-to-text
+
+Runs as its own service (`migrantbuddy.speech.main`, port 8002 by default), independent
+of the RAG service — see "Run the backend services" above. The 🎤 button next to the
+chat input opens a WebSocket directly to it (`/transcribe/ws`) and streams audio live as
+you speak (`faster-whisper`, multilingual — no language is pinned, so it auto-detects
+Burmese/Tamil/Thai/Vietnamese/etc.); transcribed text appears in the input box
+incrementally as each spoken segment is confirmed, for you to review and edit rather
+than auto-sent — transcription errors are common, and this app answers
+employment/legal-rights questions, where getting the question right matters.
+`MIGRANTBUDDY_WHISPER_MODEL_SIZE=small` by default, a balance of multilingual accuracy
+against CPU-only inference speed; bump it up if you have a GPU
+(`MIGRANTBUDDY_WHISPER_DEVICE=cuda`) or down if `small` is too slow.
 
 ### Observability (Langfuse)
 

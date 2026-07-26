@@ -27,6 +27,8 @@ dependencies = [
     "langchain-core",
     "langgraph-checkpoint-redis",
     "redis",
+    "faster-whisper",
+    "python-multipart",
 ]
 
 [project.optional-dependencies]

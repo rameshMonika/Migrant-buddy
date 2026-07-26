@@ -1,6 +1,6 @@
 import redis
 
-from migrantbuddy.api.rate_limit import RateLimiter
+from migrantbuddy.rate_limit import RateLimiter
 
 
 class FakeRedisClient:

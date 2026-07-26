@@ -12,7 +12,6 @@ import chromadb
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from migrantbuddy.api.rate_limit import RateLimiter
 from migrantbuddy.api.routes import router
 from migrantbuddy.config import (
     CHROMA_COLLECTION_NAME,
@@ -23,6 +22,7 @@ from migrantbuddy.config import (
 )
 from migrantbuddy.indexing.chunking import Chunk
 from migrantbuddy.rag import ConversationService
+from migrantbuddy.rate_limit import RateLimiter
 from migrantbuddy.retrieval import Retriever
 
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -17,7 +17,16 @@ type ChatResponse = {
   sources: string[];
 };
 
+type TranscriptMessage = {
+  text: string;
+  final: boolean;
+};
+
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+// Separate service from API_BASE_URL -- the RAG service (chat) and the
+// Whisper service (speech-to-text) run as two independent processes, so the
+// frontend talks to each directly rather than one proxying the other.
+const WHISPER_WS_URL = process.env.NEXT_PUBLIC_WHISPER_WS_URL ?? "ws://localhost:8002/transcribe/ws";
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -29,6 +38,78 @@ export default function ChatPage() {
   // running summary server-side -- the client only ever sends the latest
   // message, never the full history.
   const [threadId] = useState(() => crypto.randomUUID());
+  const [isRecording, setIsRecording] = useState(false);
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const webSocketRef = useRef<WebSocket | null>(null);
+
+  async function startRecording() {
+    setError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const socket = new WebSocket(WHISPER_WS_URL);
+      webSocketRef.current = socket;
+
+      socket.onmessage = (event) => {
+        const data: TranscriptMessage = JSON.parse(event.data);
+        // Populate the input box rather than auto-sending -- transcription
+        // errors are common, and getting a question wrong matters more here
+        // (employment/legal rights) than in a casual chat app.
+        setInput((previous) => (previous ? `${previous} ${data.text}` : data.text));
+      };
+
+      socket.onerror = () => {
+        setError("Lost connection to the transcription service.");
+      };
+
+      socket.onclose = () => {
+        // The server closes the socket itself once it's replied to "stop"
+        // with whatever was left in the buffer -- that's the signal that
+        // transcription is done, not a fixed timeout on the client.
+        setIsTranscribing(false);
+      };
+
+      await new Promise<void>((resolve, reject) => {
+        socket.addEventListener("open", () => resolve(), { once: true });
+        socket.addEventListener("error", () => reject(new Error("Couldn't reach the transcription service.")), {
+          once: true,
+        });
+      });
+
+      const mediaRecorder = new MediaRecorder(stream);
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0 && socket.readyState === WebSocket.OPEN) {
+          socket.send(event.data);
+        }
+      };
+
+      mediaRecorder.onstop = () => {
+        // Stop the mic indicator/permission light -- getUserMedia's stream
+        // stays "live" until every track is explicitly stopped.
+        stream.getTracks().forEach((track) => track.stop());
+        setIsTranscribing(true);
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send("stop");
+        } else {
+          setIsTranscribing(false);
+        }
+      };
+
+      mediaRecorderRef.current = mediaRecorder;
+      // A timeslice streams chunks live as they're recorded instead of
+      // buffering everything until stop().
+      mediaRecorder.start(250);
+      setIsRecording(true);
+    } catch {
+      setError("Couldn't access the microphone -- check your browser's permission settings.");
+    }
+  }
+
+  function stopRecording() {
+    mediaRecorderRef.current?.stop();
+    setIsRecording(false);
+  }
 
   async function sendMessage() {
     const message = input.trim();
@@ -125,10 +206,23 @@ export default function ChatPage() {
         <input
           value={input}
           onChange={(event) => setInput(event.target.value)}
-          placeholder="e.g. How much overtime pay am I entitled to?"
+          placeholder={isTranscribing ? "Transcribing…" : "e.g. How much overtime pay am I entitled to?"}
+          disabled={isTranscribing}
           style={{ flex: 1, padding: 8 }}
         />
-        <button type="submit" disabled={isLoading}>
+        <button
+          type="button"
+          onClick={isRecording ? stopRecording : startRecording}
+          disabled={isLoading || isTranscribing}
+          title={isRecording ? "Stop recording" : "Record a question"}
+          style={{
+            background: isRecording ? "#d73a49" : undefined,
+            color: isRecording ? "#fff" : undefined,
+          }}
+        >
+          {isRecording ? "⏹" : "🎤"}
+        </button>
+        <button type="submit" disabled={isLoading || isTranscribing}>
           Send
         </button>
       </form>
