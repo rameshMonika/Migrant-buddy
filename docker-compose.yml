@@ -24,6 +24,11 @@ services:
       context: .
       dockerfile: Dockerfile
       target: rag
+    # Tags the locally-built image with this name (used by `docker compose
+    # push`) -- also lets `docker compose pull rag` fetch the prebuilt image
+    # from Docker Hub instead of building locally. `up`/`build` still build
+    # locally by default; this doesn't change that.
+    image: monikaramesh/migrantbuddy-rag:latest
     ports:
       # Host port 8000 collided with an unrelated container on this
       # machine (iot-modified's prometheus-exporter) -- published on 8010
@@ -61,6 +66,7 @@ services:
       context: .
       dockerfile: Dockerfile
       target: speech
+    image: monikaramesh/migrantbuddy-speech:latest
     ports:
       - "8002:8002"
     env_file:
@@ -82,6 +88,7 @@ services:
         # build time, not read at container runtime. See Dockerfile comment.
         NEXT_PUBLIC_API_BASE_URL: http://localhost:8010
         NEXT_PUBLIC_WHISPER_WS_URL: ws://localhost:8002/transcribe/ws
+    image: monikaramesh/migrantbuddy-frontend:latest
     ports:
       # Host port 3000 collided with an unrelated grafana container on
       # this machine -- published on 3001 instead.

@@ -143,6 +143,32 @@ whole reason vLLM's here — it was previously blocked by a Windows-only Long Pa
 installing natively) — switch back to `ollama` any time by editing that one env var in
 `docker-compose.yml`, no rebuild needed, just `docker compose up -d rag`.
 
+### Pulling prebuilt images from Docker Hub instead of building locally
+
+`rag`, `speech`, and `frontend` each have an `image:` tag (`monikaramesh/migrantbuddy-*`)
+alongside their `build:` block in `docker-compose.yml`. `docker compose build`/`up`
+still build locally by default — this doesn't change your day-to-day workflow. It just
+means:
+
+- **Publishing a new version** (after you've built locally and want to share it):
+  ```powershell
+  docker compose push rag speech frontend
+  ```
+- **Running elsewhere without building** (e.g. a machine without this repo's full
+  source, or without the ML dependencies' build requirements):
+  ```powershell
+  docker compose pull rag speech frontend
+  docker compose up
+  ```
+  `up` won't rebuild if a matching image already exists locally (from the pull), so
+  this skips the build step entirely.
+
+Note the `frontend` image has `NEXT_PUBLIC_API_BASE_URL`/`NEXT_PUBLIC_WHISPER_WS_URL`
+baked in from *this machine's* build (`localhost:8010`/`localhost:8002`) — pulling that
+image onto a different machine only makes sense if it'll also reach the backend at
+those same addresses (e.g. via the same Docker network or port-forwarding setup);
+otherwise it needs rebuilding with different build `args:` for that environment.
+
 ### Debugging vLLM in isolation
 
 `vllm`'s config lives in its own `docker-compose.vllm.yml`, included by the main
