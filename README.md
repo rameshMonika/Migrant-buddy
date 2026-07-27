@@ -88,6 +88,93 @@ Open `http://localhost:3000`. The chat UI calls the RAG service at
 and the Whisper service directly at `NEXT_PUBLIC_WHISPER_WS_URL` (defaults to
 `ws://localhost:8002/transcribe/ws`) -- there's no proxying between the two.
 
+## Run with Docker
+
+An alternative to steps 1, 3, and 4 above — runs the RAG service, Whisper service,
+frontend, Redis, Ollama, and vLLM as six containers via one `docker-compose.yml`.
+**Step 2 ("Build the data") is still a local prerequisite either way** — Docker doesn't
+run the ingestion/chunking/embedding notebook pipeline, it just bind-mounts whatever
+`data/processed/` those notebooks already produced on your machine (read-write, not
+read-only -- Chroma writes its own SQLite WAL/lock files even when only querying).
+
+Prerequisites:
+- Docker Desktop
+- For vLLM specifically: an NVIDIA GPU with Docker Desktop's WSL2 GPU passthrough
+  configured (NVIDIA Container Toolkit). Without it, the `vllm` service will fail to
+  start — either set that up first, or remove the `deploy:` block from `vllm` in
+  `docker-compose.yml` and set `MIGRANTBUDDY_GENERATION_BACKEND=ollama` under `rag`'s
+  `environment:` to fall back to Ollama (CPU-friendly, no GPU needed).
+- `.env` at the project root (`copy .env.example .env`) — same file the local setup
+  uses, for Langfuse keys etc.
+
+```powershell
+docker compose build
+docker compose up
+```
+
+One-time step, once `ollama` is up (pulls the model into the `ollama-data` volume,
+persisted across restarts):
+
+```powershell
+docker compose exec ollama ollama pull aisingapore/Llama-SEA-LION-v3-8B-IT
+```
+
+Check everything's up:
+
+```powershell
+curl http://localhost:8010/health   # RAG (8000 is remapped to 8010 -- see note below)
+curl http://localhost:8002/health   # Whisper
+curl http://localhost:8001/v1/models  # vLLM (once the model's finished loading)
+```
+
+Open `http://localhost:3001` (also remapped, see below). The `NEXT_PUBLIC_*` URLs are
+baked in as Docker build args instead of read from `.env.local` (see
+`frontend/Dockerfile`), so they don't need to match your local dev setup.
+
+> **Port note**: `rag` and `frontend` publish on `8010`/`3001` instead of the `8000`/
+> `3000` used by local (non-Docker) dev — those two collided with unrelated containers
+> already running on this machine (an `iot-modified` project's Prometheus exporter on
+> 8000, Grafana on 3000). If you don't have that conflict, feel free to remap both back
+> to `8000`/`3000` in `docker-compose.yml` (update the `rag`/`frontend` `ports:` entries
+> and the `frontend` build `args:`/`rag`'s `MIGRANTBUDDY_FRONTEND_ORIGIN` together).
+
+`rag` defaults to `MIGRANTBUDDY_GENERATION_BACKEND=vllm` in `docker-compose.yml` (the
+whole reason vLLM's here — it was previously blocked by a Windows-only Long Path error
+installing natively) — switch back to `ollama` any time by editing that one env var in
+`docker-compose.yml`, no rebuild needed, just `docker compose up -d rag`.
+
+### Debugging vLLM in isolation
+
+`vllm`'s config lives in its own `docker-compose.vllm.yml`, included by the main
+`docker-compose.yml` (top-level `include:`) rather than defined inline — it's the one
+service needing repeated iteration (CUDA version pin, `--max-model-len`, GPU memory
+budget), and it doesn't depend on redis/ollama/rag/speech/frontend (only `rag` depends
+on it, not the other way around). This means it can be brought up completely on its
+own, without the rest of the stack:
+
+```powershell
+docker compose -f docker-compose.vllm.yml up
+```
+
+`docker compose up` (no `-f`) still brings up the full stack including `vllm`,
+unchanged — the split is purely for isolating debugging, not a behavior change.
+
+**Small-VRAM GPUs (e.g. 8GB laptop GPUs)**: SEA-LION-8B's ~15GB (bf16) weights don't
+fit on their own, regardless of `--max-model-len`/`gpu_memory_utilization` tuning --
+vLLM's rigid upfront memory reservation is built for datacenter-class GPUs (16GB+). If
+you hit `ValueError: No available memory for the cache blocks`, check
+`nvidia-smi --query-gpu=memory.total --format=csv`; if it's well under ~16GB, the
+full-precision model won't fit. `docker-compose.vllm.yml`'s `command` already works
+around this with on-the-fly 4-bit quantization (`--quantization bitsandbytes
+--load-format bitsandbytes`), which shrinks weights to ~5GB -- confirmed working on an
+8GB card (`Model loading took 5.34GB`, full startup, `# cuda blocks: 319`). Tradeoffs:
+bitsandbytes quantization is noted by vLLM itself as "not fully optimized" (slower than
+non-quantized), and it forces the older V0 engine (`--quantization bitsandbytes is not
+supported by the V1 Engine`). If quantized quality/speed isn't good enough,
+`ollama` (already in the stack, serving a quantized GGUF build of the same model) is
+the other fallback path -- switch `rag`'s `MIGRANTBUDDY_GENERATION_BACKEND` to
+`ollama`.
+
 ## Configuration
 
 For local secrets (Langfuse keys) and any config overrides, copy `.env.example` to

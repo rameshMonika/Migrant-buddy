@@ -90,7 +90,7 @@ GENERATION_BACKEND = os.getenv("MIGRANTBUDDY_GENERATION_BACKEND", "ollama")
 
 # The frontend's origin -- needed for CORS since the Next.js dev server
 # (localhost:3000) and this API (localhost:8000) are different origins.
-FRONTEND_ORIGIN = os.getenv("MIGRANTBUDDY_FRONTEND_ORIGIN", "http://localhost:3000")
+FRONTEND_ORIGIN = os.getenv("MIGRANTBUDDY_FRONTEND_ORIGIN", "http://localhost:3001")
 
 # "memory" (LangGraph's built-in in-memory checkpointer -- no external
 # service, conversations lost on server restart) or "redis" (persists

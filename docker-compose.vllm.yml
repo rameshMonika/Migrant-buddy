@@ -1,0 +1,64 @@
+# Split out from docker-compose.yml for isolated debugging -- vLLM was the
+# one service needing repeated iteration (CUDA version pin, --max-model-len,
+# VRAM budget), and it has no dependency on redis/ollama/rag/speech/frontend
+# (only `rag` depends on it, not the other way around), so it can run fully
+# standalone:
+#
+#   docker compose -f docker-compose.vllm.yml up
+#
+# Included by the main docker-compose.yml (see its top-level `include:`) so
+# `docker compose up` still brings this up as part of the full stack,
+# unchanged.
+
+services:
+  # GPU-accelerated production generation backend (continuous batching /
+  # PagedAttention) -- CLAUDE.md's settled choice, never actually run
+  # locally before this (native Windows install hit a Long Path error).
+  # Requires Docker Desktop's WSL2 GPU passthrough + an NVIDIA GPU; without
+  # that this service will fail to start (drop the `deploy:` block and
+  # switch rag's MIGRANTBUDDY_GENERATION_BACKEND to `ollama` if so).
+  #
+  # Pinned to v0.8.1 (CUDA 12.4.0) rather than :latest (CUDA 13.0+) --
+  # NVIDIA drivers are backward-compatible with older CUDA toolkit versions
+  # but not forward-compatible with newer ones, so :latest failed here with
+  # driver 12.5 ("unsatisfied condition: cuda>=13.0"). Bump this tag if the
+  # host driver is ever upgraded past what a newer vLLM release requires.
+  vllm:
+    image: vllm/vllm-openai:v0.8.1
+    # --max-model-len caps vLLM's KV cache allocation -- SEA-LION-v3-8B
+    # inherits Llama 3's 128K context window, and vLLM otherwise reserves
+    # cache assuming sequences could be that long, which left zero GPU
+    # memory for cache blocks after just loading the model weights ("No
+    # available memory for the cache blocks" at startup). This app's actual
+    # prompts (RAG context + up to GENERATION_MAX_TOKENS=512 output) are a
+    # few thousand tokens at most -- 8192 is generous headroom, not a
+    # meaningful capability loss.
+    #
+    # Still not enough on its own: this model's weights alone are ~15GB in
+    # bf16, which doesn't fit an 8GB-VRAM GPU regardless of max-model-len.
+    # --quantization/--load-format bitsandbytes loads the regular
+    # checkpoint and quantizes it to 4-bit on the fly (no separately
+    # pre-quantized repo needed) -- shrinks weights to roughly 4-5GB,
+    # leaving enough of the remaining ~3GB budget for a modest KV cache.
+    # max-model-len dropped to 4096 (from 8192) to leave more of that
+    # tight budget for cache blocks now that weights aren't the dominant
+    # cost anymore.
+    command: ["--model", "aisingapore/Llama-SEA-LION-v3-8B-IT", "--port", "8001", "--max-model-len", "4096", "--quantization", "bitsandbytes", "--load-format", "bitsandbytes"]
+    ports:
+      # Container's own listen port (--port above) is 8001 -- must match
+      # the container side of this mapping, not just the host side.
+      - "8001:8001"
+    volumes:
+      - vllm-hf-cache:/root/.cache/huggingface
+    env_file:
+      - .env
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: ["gpu"]
+
+volumes:
+  vllm-hf-cache:

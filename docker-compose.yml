@@ -1,0 +1,96 @@
+# vllm lives in its own compose file (easier to iterate on/debug in
+# isolation -- see that file's header comment); included here so
+# `docker compose up` still brings up the full stack unchanged.
+include:
+  - docker-compose.vllm.yml
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  ollama:
+    image: ollama/ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+
+  rag:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: rag
+    ports:
+      # Host port 8000 collided with an unrelated container on this
+      # machine (iot-modified's prometheus-exporter) -- published on 8010
+      # instead. The container's own internal port is still 8000
+      # (unrelated to the host side of the mapping).
+      - "8010:8000"
+    env_file:
+      - .env
+    environment:
+      # Container-to-container hostnames -- these differ from the
+      # frontend's NEXT_PUBLIC_* values, which the browser (outside the
+      # compose network) reaches over published host ports instead.
+      MIGRANTBUDDY_OLLAMA_BASE_URL: http://ollama:11434
+      MIGRANTBUDDY_VLLM_BASE_URL: http://vllm:8001
+      # vllm now loads successfully with on-the-fly bitsandbytes 4-bit
+      # quantization (see docker-compose.vllm.yml) -- fits this machine's
+      # 8GB VRAM where the full bf16 model didn't.
+      MIGRANTBUDDY_GENERATION_BACKEND: vllm
+      MIGRANTBUDDY_REDIS_URL: redis://redis:6379
+      MIGRANTBUDDY_FRONTEND_ORIGIN: http://localhost:3001
+    volumes:
+      # Ingestion/chunking/embedding still run locally via the notebooks
+      # (see README) -- Docker just needs the resulting chunks/Chroma
+      # collection. Not mounted read-only: Chroma's PersistentClient
+      # writes its own SQLite WAL/lock files alongside chroma.sqlite3 even
+      # when only querying, so :ro breaks it with "readonly database".
+      - ./data/processed:/app/data/processed
+    depends_on:
+      - redis
+      - ollama
+      - vllm
+
+  speech:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: speech
+    ports:
+      - "8002:8002"
+    env_file:
+      - .env
+    environment:
+      MIGRANTBUDDY_REDIS_URL: redis://redis:6379
+      MIGRANTBUDDY_FRONTEND_ORIGIN: http://localhost:3001
+    volumes:
+      - whisper-hf-cache:/root/.cache/huggingface
+    depends_on:
+      - redis
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Browser-reachable addresses (published host ports) -- inlined at
+        # build time, not read at container runtime. See Dockerfile comment.
+        NEXT_PUBLIC_API_BASE_URL: http://localhost:8010
+        NEXT_PUBLIC_WHISPER_WS_URL: ws://localhost:8002/transcribe/ws
+    ports:
+      # Host port 3000 collided with an unrelated grafana container on
+      # this machine -- published on 3001 instead.
+      - "3001:3000"
+    depends_on:
+      - rag
+      - speech
+
+volumes:
+  redis-data:
+  ollama-data:
+  whisper-hf-cache:
