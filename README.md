@@ -175,6 +175,77 @@ supported by the V1 Engine`). If quantized quality/speed isn't good enough,
 the other fallback path -- switch `rag`'s `MIGRANTBUDDY_GENERATION_BACKEND` to
 `ollama`.
 
+### vLLM Docker troubleshooting log
+
+Everything below actually happened getting `vllm` working in this stack, in order --
+kept as a reference in case any of it resurfaces (e.g. after a driver update or GPU
+swap). vLLM works end-to-end as of the last entry.
+
+1. **`:latest` image failed to start**:
+   `nvidia-container-cli: requirement error: unsatisfied condition: cuda>=13.0, please
+   update your driver`. Cause: `vllm/vllm-openai:latest` bundles a newer CUDA toolkit
+   than the installed NVIDIA driver supports (`nvidia-smi`'s `CUDA Version:` field is
+   the *maximum* the driver supports, not what's installed -- drivers are
+   backward-compatible with older CUDA toolkits, never forward-compatible with newer
+   ones). Fix: pinned to `vllm/vllm-openai:v0.8.1`, built against CUDA 12.4.0 (checked
+   via that tag's Docker Hub image-layer details), comfortably under a 12.5 driver.
+
+2. **`No available memory for the cache blocks`** (first occurrence): vLLM reserves KV
+   cache sized for the model's max context -- SEA-LION-8B inherits Llama 3's 128K
+   window, so it tried to reserve cache for that, leaving nothing after loading
+   weights. Fix attempt: `--max-model-len 8192` (this app's prompts are a few thousand
+   tokens at most). **Did not fully fix it** -- see next entry.
+
+3. **Same error, still**, even at `--max-model-len 8192`: turned out to be a harder
+   constraint underneath -- `nvidia-smi --query-gpu=memory.total` showed only **8GB**
+   total VRAM, and the model's bf16 weights alone are ~15GB. No `max-model-len` or
+   `gpu_memory_utilization` value fixes this -- the weights alone exceed total VRAM.
+   Fix: on-the-fly 4-bit quantization, `--quantization bitsandbytes --load-format
+   bitsandbytes` (no separately pre-quantized checkpoint needed -- vLLM quantizes the
+   regular checkpoint while loading it). Shrank weights to ~5.3GB, leaving enough of
+   the ~7.2GB budget (90% of 8GB) for a small KV cache. Confirmed working: `Model
+   loading took 5.3422 GB`, full startup, `/v1/chat/completions` serving.
+
+4. **Host port collisions** (not vLLM-specific, but hit at the same time): `rag`'s
+   `8000` and `frontend`'s `3000` collided with unrelated containers already running on
+   this machine (an `iot-modified` project's Prometheus exporter, and Grafana). Fix:
+   remapped to `8010`/`3001` in `docker-compose.yml` (see the port note further up).
+   Diagnosed via `docker ps -a` showing every container on the machine, not just this
+   project's -- the giveaway was a "Not Found" response with IIS-style wording instead
+   of FastAPI's JSON 404 body, meaning something other than `rag` was answering on 8000.
+
+5. **`rag`'s own port mismatch, self-inflicted**: an edit changed `vllm`'s port mapping
+   to `"8001:8000"` (host:container) without updating the `--port 8001` the process
+   itself listens on, and `rag`'s `MIGRANTBUDDY_VLLM_BASE_URL` to `http://vllm:8000` to
+   match -- container-to-container traffic went to container port 8000, but nothing
+   listened there (vLLM was on 8001 internally). Fix: mapping back to `"8001:8001"` and
+   `MIGRANTBUDDY_VLLM_BASE_URL` back to `http://vllm:8001` -- the container-side port in
+   a `hostPort:containerPort` mapping must match what the process actually binds to.
+
+6. **Frontend calling the wrong backend port after a port remap**: after remapping
+   `rag` to `8010`, the browser was still calling `:8000` -- because
+   `NEXT_PUBLIC_API_BASE_URL` is inlined into the JS bundle at Docker **build** time,
+   not read at container runtime. Restarting the `frontend` container without
+   rebuilding just reran the old bundle. Fix: `docker compose build frontend` (not just
+   `up`) after any `NEXT_PUBLIC_*` build-arg change.
+
+7. **Misleading "CORS error" in the browser twice**, for two different real causes:
+   FastAPI/Starlette doesn't add `Access-Control-Allow-Origin` to a response generated
+   by an *unhandled exception* (it's added by `CORSMiddleware`, which sits inside
+   Starlette's own `ServerErrorMiddleware` in the stack -- an exception that escapes to
+   that outer layer never reaches the CORS logic). Both times the browser reported a
+   CORS failure, the actual cause was `rag` throwing `ConnectionError` trying to reach
+   a `vllm` that wasn't actually listening (once from the port mismatch above, once
+   because `vllm`'s engine had crashed from the VRAM issue). Lesson: a browser "CORS
+   error" on a same-origin-configured backend is often masking a backend 500, not an
+   actual CORS misconfiguration -- check `docker compose logs rag` first.
+
+8. **`405 Method Not Allowed` on `/chat`**: turned out to be a `GET /chat` reaching the
+   server (confirmed via `docker compose logs rag`'s Uvicorn access-log line), not a
+   `POST` -- caused by manually opening `http://localhost:8010/chat` in a browser tab
+   to inspect it, which always sends `GET`. Not an app bug; the frontend's actual
+   `fetch(...)` call always correctly uses `POST`.
+
 ## Configuration
 
 For local secrets (Langfuse keys) and any config overrides, copy `.env.example` to
