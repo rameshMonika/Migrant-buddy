@@ -5,6 +5,7 @@ import { useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import LiveAvatar from "./components/LiveAvatar";
+import { MicIcon, SendIcon, SpeakerIcon, SpeakerMutedIcon, StopIcon } from "./components/icons";
 
 type Message = {
   role: "user" | "assistant";
@@ -53,6 +54,18 @@ export default function ChatPage() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const webSocketRef = useRef<WebSocket | null>(null);
+  // Safety net for the "stop" round trip below -- if the server's close
+  // frame is ever dropped, delayed, or swallowed by a proxy (onclose is the
+  // only other place isTranscribing resets), this fires anyway so the
+  // input/mic/Send buttons never end up stuck disabled indefinitely.
+  const transcribeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function clearTranscribeTimeout() {
+    if (transcribeTimeoutRef.current !== null) {
+      clearTimeout(transcribeTimeoutRef.current);
+      transcribeTimeoutRef.current = null;
+    }
+  }
 
   // Text-to-speech + LiveAvatar (docs.liveavatar.com, LITE mode) -- LiveAvatar
   // renders the lip-synced video server-side from audio we generate via
@@ -162,14 +175,17 @@ export default function ChatPage() {
         // left isTranscribing stuck true forever -- permanently disabling
         // the input/mic/Send buttons, since onclose (the only other place
         // that resets it) doesn't reliably fire in every error case.
+        clearTranscribeTimeout();
         setError("Lost connection to the transcription service.");
         setIsTranscribing(false);
       };
 
       socket.onclose = () => {
         // The server closes the socket itself once it's replied to "stop"
-        // with whatever was left in the buffer -- that's the signal that
-        // transcription is done, not a fixed timeout on the client.
+        // with whatever was left in the buffer -- that's the normal signal
+        // that transcription is done. transcribeTimeoutRef (started when
+        // "stop" is sent, below) is the fallback for when this never fires.
+        clearTranscribeTimeout();
         setIsTranscribing(false);
       };
 
@@ -195,6 +211,15 @@ export default function ChatPage() {
         setIsTranscribing(true);
         if (socket.readyState === WebSocket.OPEN) {
           socket.send("stop");
+          // Server processing (final Whisper flush) plus network round
+          // trip should take well under this -- if it hasn't closed by
+          // then, force the buttons back on rather than leave the user
+          // stuck unable to send or record again.
+          clearTranscribeTimeout();
+          transcribeTimeoutRef.current = setTimeout(() => {
+            transcribeTimeoutRef.current = null;
+            setIsTranscribing(false);
+          }, 8000);
         } else {
           setIsTranscribing(false);
         }
@@ -325,62 +350,59 @@ export default function ChatPage() {
   }
 
   return (
-    <main style={{ maxWidth: 1100, margin: "0 auto", padding: 24 }}>
-      <h1>migrantBuddy</h1>
-      <p>
-        Ask a question about Singapore employment rules (salary, hours, work permits,
-        medical insurance).
-      </p>
+    <main className="app-shell">
+      <div className="app-header">
+        <h1>migrantBuddy</h1>
+        <p>
+          Ask a question about Singapore employment rules (salary, hours, work permits,
+          medical insurance).
+        </p>
+      </div>
 
-      <div style={{ display: "flex", gap: 24, alignItems: "flex-start" }}>
+      <div className="layout-grid">
         {AVATAR_TTS_ENABLED && (
-          <div style={{ flex: "0 0 420px" }}>
+          <div className="avatar-panel">
             <LiveAvatar videoRef={videoRef} isReady={isAvatarReady} />
           </div>
         )}
 
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 16 }}>
+        <div className="chat-panel">
+          <div className="messages-scroll">
             {messages.map((message, index) => (
-              <div key={index} style={{ textAlign: message.role === "user" ? "right" : "left" }}>
-                <div
-                  className={message.role === "assistant" ? "markdown-content" : undefined}
-                  style={{
-                    display: "inline-block",
-                    padding: "8px 12px",
-                    borderRadius: 8,
-                    background: message.role === "user" ? "#0366d6" : "#f0f0f0",
-                    color: message.role === "user" ? "#fff" : "#000",
-                    maxWidth: "80%",
-                    textAlign: "left",
-                  }}
-                >
-                  {message.role === "assistant" ? (
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
-                  ) : (
-                    message.content
+              <div key={index} className={`message-row from-${message.role}`}>
+                <div>
+                  <div
+                    className={`bubble bubble-${message.role} ${
+                      message.role === "assistant" ? "markdown-content" : ""
+                    }`}
+                  >
+                    {message.role === "assistant" ? (
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                    ) : (
+                      message.content
+                    )}
+                  </div>
+                  {message.sources && message.sources.length > 0 && (
+                    <div className="sources-row">
+                      Sources:
+                      {message.sources.map((source, sourceIndex) => (
+                        <a
+                          key={sourceIndex}
+                          href={source}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="source-pill"
+                        >
+                          {sourceIndex + 1}
+                        </a>
+                      ))}
+                    </div>
                   )}
                 </div>
-                {message.sources && message.sources.length > 0 && (
-                  <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>
-                    Sources:{" "}
-                    {message.sources.map((source, sourceIndex) => (
-                      <a
-                        key={sourceIndex}
-                        href={source}
-                        target="_blank"
-                        rel="noreferrer"
-                        style={{ marginRight: 8 }}
-                      >
-                        [{sourceIndex + 1}]
-                      </a>
-                    ))}
-                  </div>
-                )}
               </div>
             ))}
-            {isLoading && <div style={{ color: "#666" }}>Thinking…</div>}
-            {error && <div style={{ color: "red" }}>{error}</div>}
+            {isLoading && <div className="status-line">Thinking…</div>}
+            {error && <div className="status-line is-error">{error}</div>}
           </div>
 
           <form
@@ -388,38 +410,41 @@ export default function ChatPage() {
               event.preventDefault();
               void sendMessage();
             }}
-            style={{ display: "flex", gap: 8 }}
+            className="composer"
           >
+            <button
+              type="button"
+              className={`icon-button ${isRecording ? "is-active" : ""}`}
+              onClick={isRecording ? stopRecording : startRecording}
+              disabled={isLoading || isTranscribing}
+              title={isRecording ? "Stop recording" : "Record a question"}
+            >
+              {isRecording ? <StopIcon /> : <MicIcon />}
+            </button>
             <input
+              className="composer-input"
               value={input}
               onChange={(event) => setInput(event.target.value)}
               placeholder={isTranscribing ? "Transcribing…" : "e.g. How much overtime pay am I entitled to?"}
               disabled={isTranscribing}
-              style={{ flex: 1, padding: 8 }}
             />
-            <button
-              type="button"
-              onClick={isRecording ? stopRecording : startRecording}
-              disabled={isLoading || isTranscribing}
-              title={isRecording ? "Stop recording" : "Record a question"}
-              style={{
-                background: isRecording ? "#d73a49" : undefined,
-                color: isRecording ? "#fff" : undefined,
-              }}
-            >
-              {isRecording ? "⏹" : "🎤"}
-            </button>
             {AVATAR_TTS_ENABLED && (
               <button
                 type="button"
+                className="icon-button"
                 onClick={() => setIsMuted((previous) => !previous)}
                 title={isMuted ? "Unmute voice output" : "Mute voice output"}
               >
-                {isMuted ? "🔇" : "🔊"}
+                {isMuted ? <SpeakerMutedIcon /> : <SpeakerIcon />}
               </button>
             )}
-            <button type="submit" disabled={isLoading || isTranscribing}>
-              Send
+            <button
+              type="submit"
+              className="send-button"
+              disabled={isLoading || isTranscribing}
+              title="Send"
+            >
+              <SendIcon />
             </button>
           </form>
         </div>
