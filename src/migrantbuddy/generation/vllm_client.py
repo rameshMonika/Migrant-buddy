@@ -14,6 +14,7 @@ not Ollama's message.content.
 import requests
 
 from migrantbuddy.config import GENERATION_MAX_TOKENS, GENERATION_MODEL_NAME, VLLM_BASE_URL
+from migrantbuddy.generation.truncation import trim_to_last_complete_sentence
 from migrantbuddy.observability import observe
 
 
@@ -42,4 +43,11 @@ def generate(
         timeout=timeout,
     )
     response.raise_for_status()
-    return response.json()["choices"][0]["message"]["content"]
+    choice = response.json()["choices"][0]
+    content = choice["message"]["content"]
+    # finish_reason "length" means max_tokens cut generation off mid-thought
+    # (vs. "stop", a natural end) -- only trim in that case, never touch a
+    # clean stop even if it happens not to end in recognized punctuation.
+    if choice.get("finish_reason") == "length":
+        content = trim_to_last_complete_sentence(content)
+    return content

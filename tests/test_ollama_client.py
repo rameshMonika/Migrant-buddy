@@ -29,7 +29,9 @@ def test_generate_sends_system_and_user_messages(monkeypatch: pytest.MonkeyPatch
 
     monkeypatch.setattr("migrantbuddy.generation.ollama_client.requests.post", fake_post)
 
-    result = generate("system prompt", "user prompt", model_name="test-model", base_url="http://fake:1234")
+    result = generate(
+        "system prompt", "user prompt", model_name="test-model", base_url="http://fake:1234"
+    )
 
     assert result == "the answer"
     assert captured["url"] == "http://fake:1234/api/chat"
@@ -129,3 +131,42 @@ def test_generate_defaults_keep_alive_from_config(monkeypatch: pytest.MonkeyPatc
     generate("system", "user")
 
     assert captured["json"]["keep_alive"] == OLLAMA_KEEP_ALIVE
+
+
+def test_generate_trims_dangling_sentence_when_done_reason_is_length(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # done_reason "length" means num_predict cut the model off mid-thought --
+    # trim back to the last complete sentence instead of returning a
+    # dangling fragment.
+    def fake_post(url, json, timeout):
+        return FakeResponse(
+            {
+                "message": {"content": "First complete sentence. Second sentence cut off mid-wo"},
+                "done_reason": "length",
+            }
+        )
+
+    monkeypatch.setattr("migrantbuddy.generation.ollama_client.requests.post", fake_post)
+
+    result = generate("system", "user")
+
+    assert result == "First complete sentence."
+
+
+def test_generate_does_not_trim_when_done_reason_is_stop(monkeypatch: pytest.MonkeyPatch):
+    # A natural stop should never be touched, even if the text happens not
+    # to end in recognized punctuation.
+    def fake_post(url, json, timeout):
+        return FakeResponse(
+            {
+                "message": {"content": "A complete answer with no trailing period"},
+                "done_reason": "stop",
+            }
+        )
+
+    monkeypatch.setattr("migrantbuddy.generation.ollama_client.requests.post", fake_post)
+
+    result = generate("system", "user")
+
+    assert result == "A complete answer with no trailing period"

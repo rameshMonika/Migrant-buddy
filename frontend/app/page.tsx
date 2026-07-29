@@ -59,7 +59,12 @@ export default function ChatPage() {
       };
 
       socket.onerror = () => {
+        // Without this, a socket that errors instead of closing cleanly
+        // left isTranscribing stuck true forever -- permanently disabling
+        // the input/mic/Send buttons, since onclose (the only other place
+        // that resets it) doesn't reliably fire in every error case.
         setError("Lost connection to the transcription service.");
+        setIsTranscribing(false);
       };
 
       socket.onclose = () => {

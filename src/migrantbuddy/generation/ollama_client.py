@@ -17,6 +17,7 @@ from migrantbuddy.config import (
     OLLAMA_BASE_URL,
     OLLAMA_KEEP_ALIVE,
 )
+from migrantbuddy.generation.truncation import trim_to_last_complete_sentence
 from migrantbuddy.observability import observe
 
 
@@ -52,4 +53,11 @@ def generate(
         timeout=timeout,
     )
     response.raise_for_status()
-    return response.json()["message"]["content"]
+    data = response.json()
+    content = data["message"]["content"]
+    # done_reason "length" means num_predict cut generation off mid-thought
+    # (vs. "stop", a natural end) -- only trim in that case, never touch a
+    # clean stop even if it happens not to end in recognized punctuation.
+    if data.get("done_reason") == "length":
+        content = trim_to_last_complete_sentence(content)
+    return content

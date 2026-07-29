@@ -40,12 +40,19 @@ CHUNK_OVERLAP = 100
 # Caps the generation backend's output length -- without this, a model that
 # starts rambling or repeating (a known failure mode for smaller quantized
 # models) has no ceiling and keeps generating until it hits a natural stop
-# or the model's max context, which can take a long time. 512 is generous
-# for a multi-paragraph answer with a few bullet points (the typical shape
-# of answers seen in notebooks/05_generation.ipynb) while still bounding
-# the worst case. Does not help "time to first token" (prompt processing) --
-# only bounds how long the output itself can run.
-GENERATION_MAX_TOKENS = 512
+# or the model's max context, which can take a long time. Lowered from 512
+# -- the original value was sized for a full multi-paragraph answer with
+# bullet points, but that shape turned out to be the problem: answers were
+# enumerating every related rule instead of addressing the actual question.
+# 400 gives SYSTEM_PROMPT's "finish as a complete thought" instruction
+# enough headroom to actually succeed -- 256 and 300 were both tried first
+# and still cut answers off mid-sentence in practice (confirmed via
+# done_reason/finish_reason, not guessed). ollama_client.py/vllm_client.py
+# additionally trim to the last complete sentence on the rare truncation
+# that still gets through, as a hard backstop -- this cap and that trim are
+# complementary, not alternatives. Does not help "time to first token"
+# (prompt processing) -- only bounds how long the output itself can run.
+GENERATION_MAX_TOKENS = 400
 
 # Conversational memory (rag/) -- once a conversation exceeds this many
 # messages, older ones get condensed into a running summary instead of

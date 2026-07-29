@@ -68,8 +68,10 @@ def test_build_prompt_repeats_language_instruction_next_to_the_question():
     # before "Answer:" is the actual fix -- see prompts.py's module docstring.
     prompt = build_prompt("query", [])
 
-    assert "answer in the same language as the question" in prompt
-    assert prompt.index("answer in the same language as the question") > prompt.index("Question: query")
+    assert "answer ONLY in the same language as the question" in prompt
+    assert prompt.index("answer ONLY in the same language as the question") > prompt.index(
+        "Question: query"
+    )
     assert prompt.rstrip().endswith("Answer:")
 
 
