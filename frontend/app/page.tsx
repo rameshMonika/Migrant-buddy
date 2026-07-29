@@ -10,13 +10,6 @@ type Message = {
   sources?: string[];
 };
 
-type ChatResponse = {
-  thread_id: string;
-  message: string;
-  answer: string;
-  sources: string[];
-};
-
 type TranscriptMessage = {
   text: string;
   final: boolean;
@@ -116,13 +109,28 @@ export default function ChatPage() {
     setIsRecording(false);
   }
 
+  function updateLastMessage(update: (message: Message) => Message) {
+    setMessages((previous) => {
+      const updated = [...previous];
+      updated[updated.length - 1] = update(updated[updated.length - 1]);
+      return updated;
+    });
+  }
+
   async function sendMessage() {
     const message = input.trim();
     if (!message || isLoading) {
       return;
     }
 
-    setMessages((previous) => [...previous, { role: "user", content: message }]);
+    setMessages((previous) => [
+      ...previous,
+      { role: "user", content: message },
+      // Empty placeholder, filled in as `token` events stream in below --
+      // this is what makes the answer appear progressively instead of all
+      // at once.
+      { role: "assistant", content: "" },
+    ]);
     setInput("");
     setIsLoading(true);
     setError(null);
@@ -134,15 +142,44 @@ export default function ChatPage() {
         body: JSON.stringify({ message, thread_id: threadId }),
       });
 
-      if (!response.ok) {
+      if (!response.ok || !response.body) {
         throw new Error(`Request failed: ${response.status}`);
       }
 
-      const data: ChatResponse = await response.json();
-      setMessages((previous) => [
-        ...previous,
-        { role: "assistant", content: data.answer, sources: data.sources },
-      ]);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+        buffer += decoder.decode(value, { stream: true });
+
+        // SSE events are separated by a blank line; each event is an
+        // "event: <name>" line followed by a "data: <json>" line.
+        let boundary = buffer.indexOf("\n\n");
+        while (boundary !== -1) {
+          const rawEvent = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+
+          const eventName = rawEvent.match(/^event: (.+)$/m)?.[1];
+          const rawData = rawEvent.match(/^data: (.+)$/m)?.[1];
+
+          if (eventName && rawData) {
+            const data = JSON.parse(rawData);
+            if (eventName === "sources") {
+              updateLastMessage((last) => ({ ...last, sources: data.sources }));
+            } else if (eventName === "token") {
+              updateLastMessage((last) => ({ ...last, content: last.content + data.text }));
+            }
+            // "done" needs no handling -- the loop ends when the stream closes.
+          }
+
+          boundary = buffer.indexOf("\n\n");
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
     } finally {

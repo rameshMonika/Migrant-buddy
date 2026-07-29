@@ -1,6 +1,6 @@
 import pytest
 
-from migrantbuddy.generation.service import generate_answer
+from migrantbuddy.generation.service import generate_answer, stream_answer
 from migrantbuddy.indexing import Chunk
 
 
@@ -28,7 +28,9 @@ def test_generate_answer_returns_query_answer_and_sources(monkeypatch: pytest.Mo
     monkeypatch.setattr("migrantbuddy.generation.service.ollama_generate", fake_ollama_generate)
     chunks = [make_chunk("https://example.com/a", "context about salary")]
 
-    result = generate_answer("When must my employer pay my salary?", chunks, model_name="test-model")
+    result = generate_answer(
+        "When must my employer pay my salary?", chunks, model_name="test-model"
+    )
 
     assert result.query == "When must my employer pay my salary?"
     assert result.answer == "the generated answer"
@@ -43,7 +45,10 @@ def test_generate_answer_collects_sources_from_all_chunks(monkeypatch: pytest.Mo
         "migrantbuddy.generation.service.ollama_generate",
         lambda system_prompt, user_prompt, *, model_name, max_tokens: "answer",
     )
-    chunks = [make_chunk("https://example.com/a", "text a"), make_chunk("https://example.com/b", "text b")]
+    chunks = [
+        make_chunk("https://example.com/a", "text a"),
+        make_chunk("https://example.com/b", "text b"),
+    ]
 
     result = generate_answer("query", chunks)
 
@@ -130,3 +135,77 @@ def test_generate_answer_defaults_max_tokens_from_config(monkeypatch: pytest.Mon
     generate_answer("query", [])
 
     assert captured["max_tokens"] == GENERATION_MAX_TOKENS
+
+
+# --- stream_answer ---
+
+
+def test_stream_answer_yields_deltas_from_ollama_by_default(monkeypatch: pytest.MonkeyPatch):
+    def fake_stream(system_prompt, user_prompt, *, model_name, max_tokens, result_info):
+        result_info["done_reason"] = "stop"
+        yield "Hello"
+        yield " world"
+
+    monkeypatch.setattr("migrantbuddy.generation.service.ollama_generate_stream", fake_stream)
+
+    result = list(stream_answer("system", "user"))
+
+    assert result == ["Hello", " world"]
+
+
+def test_stream_answer_uses_vllm_backend_when_selected(monkeypatch: pytest.MonkeyPatch):
+    def fake_stream(system_prompt, user_prompt, *, model_name, max_tokens, result_info):
+        result_info["finish_reason"] = "stop"
+        yield "from vllm"
+
+    monkeypatch.setattr("migrantbuddy.generation.service.vllm_generate_stream", fake_stream)
+
+    result = list(stream_answer("system", "user", backend="vllm"))
+
+    assert result == ["from vllm"]
+
+
+def test_stream_answer_normalizes_ollama_truncation_into_result_info(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    def fake_stream(system_prompt, user_prompt, *, model_name, max_tokens, result_info):
+        result_info["done_reason"] = "length"
+        yield "partial"
+
+    monkeypatch.setattr("migrantbuddy.generation.service.ollama_generate_stream", fake_stream)
+
+    info = {}
+    list(stream_answer("system", "user", result_info=info))
+
+    assert info["truncated"] is True
+
+
+def test_stream_answer_normalizes_vllm_truncation_into_result_info(monkeypatch: pytest.MonkeyPatch):
+    def fake_stream(system_prompt, user_prompt, *, model_name, max_tokens, result_info):
+        result_info["finish_reason"] = "length"
+        yield "partial"
+
+    monkeypatch.setattr("migrantbuddy.generation.service.vllm_generate_stream", fake_stream)
+
+    info = {}
+    list(stream_answer("system", "user", backend="vllm", result_info=info))
+
+    assert info["truncated"] is True
+
+
+def test_stream_answer_reports_not_truncated_on_natural_stop(monkeypatch: pytest.MonkeyPatch):
+    def fake_stream(system_prompt, user_prompt, *, model_name, max_tokens, result_info):
+        result_info["done_reason"] = "stop"
+        yield "complete"
+
+    monkeypatch.setattr("migrantbuddy.generation.service.ollama_generate_stream", fake_stream)
+
+    info = {}
+    list(stream_answer("system", "user", result_info=info))
+
+    assert info["truncated"] is False
+
+
+def test_stream_answer_rejects_unknown_backend():
+    with pytest.raises(ValueError, match="Unknown generation backend"):
+        list(stream_answer("system", "user", backend="something-else"))

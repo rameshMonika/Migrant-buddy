@@ -2,6 +2,20 @@
 summarize (no-op until history grows past the threshold) -> rewrite_query
 -> retrieve -> generate.
 
+Compiled with interrupt_before=["generate"] so /chat can stream the final
+answer token-by-token: invoke() runs summarize/rewrite_query/retrieve and
+then pauses (checkpointed) right before generate, rather than calling
+generate_node's blocking generate() itself. The caller (rag/service.py's
+ConversationService) reads the paused state, streams the answer from
+outside the graph, then injects the finished text back in via
+update_state(..., as_node="generate") and resumes past it to END. This
+means generate_node's own function body no longer actually runs for real
+traffic -- it's kept only so "generate" has a valid node to interrupt
+before/resume past; the graph itself can no longer produce a complete
+answer from a single plain invoke() call the way it used to. Any caller
+that needs a full turn (including tests) must follow the same two-phase
+pattern ConversationService uses, not just call invoke() once.
+
 Stage 2: the checkpointer is now swappable via
 migrantbuddy.config.CHECKPOINTER_BACKEND -- "memory" (default, LangGraph's
 built-in in-memory saver, no external service, conversations lost on
@@ -29,7 +43,12 @@ from migrantbuddy.config import (
     REDIS_URL,
     RETRIEVAL_CACHE_ENABLED,
 )
-from migrantbuddy.rag.nodes import generate_node, make_retrieve_node, rewrite_query_node, summarize_node
+from migrantbuddy.rag.nodes import (
+    generate_node,
+    make_retrieve_node,
+    rewrite_query_node,
+    summarize_node,
+)
 from migrantbuddy.rag.state import ConversationState
 from migrantbuddy.retrieval import Retriever
 from migrantbuddy.retrieval.cache import RetrievalCache
@@ -46,7 +65,9 @@ def _build_checkpointer():
         )
         checkpointer.setup()
         return checkpointer
-    raise ValueError(f"Unknown checkpointer backend: {CHECKPOINTER_BACKEND!r} (expected 'memory' or 'redis')")
+    raise ValueError(
+        f"Unknown checkpointer backend: {CHECKPOINTER_BACKEND!r} (expected 'memory' or 'redis')"
+    )
 
 
 def build_graph(retriever: Retriever) -> CompiledStateGraph:
@@ -65,4 +86,4 @@ def build_graph(retriever: Retriever) -> CompiledStateGraph:
     graph.add_edge("retrieve", "generate")
     graph.add_edge("generate", END)
 
-    return graph.compile(checkpointer=_build_checkpointer())
+    return graph.compile(checkpointer=_build_checkpointer(), interrupt_before=["generate"])

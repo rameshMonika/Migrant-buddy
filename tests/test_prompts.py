@@ -39,7 +39,10 @@ def test_build_prompt_includes_each_chunk_source_and_text():
 
 
 def test_build_prompt_separates_multiple_chunks():
-    chunks = [make_chunk("https://example.com/a", "first"), make_chunk("https://example.com/b", "second")]
+    chunks = [
+        make_chunk("https://example.com/a", "first"),
+        make_chunk("https://example.com/b", "second"),
+    ]
 
     prompt = build_prompt("query", chunks)
 
@@ -81,7 +84,9 @@ def test_build_query_rewrite_prompt_includes_history_summary_and_followup():
         {"role": "assistant", "content": "Depends on whether you're a workman..."},
     ]
 
-    prompt = build_query_rewrite_prompt("Earlier: discussed salary basics.", history, "What about daily-rated workers?")
+    prompt = build_query_rewrite_prompt(
+        "Earlier: discussed salary basics.", history, "What about daily-rated workers?"
+    )
 
     assert "Earlier: discussed salary basics." in prompt
     assert "How much overtime pay if my salary is $3000?" in prompt

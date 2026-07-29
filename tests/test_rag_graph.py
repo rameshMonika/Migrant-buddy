@@ -1,5 +1,5 @@
 import pytest
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import MemorySaver
 
 from migrantbuddy.indexing import Chunk
@@ -23,31 +23,67 @@ class FakeRetriever:
         self.chunks_by_id = {chunk.chunk_id: chunk for chunk in chunks}
 
     def hybrid_rerank(self, query: str, top_k: int = 5):
-        return [RetrievalResult(chunk_id=chunk_id, score=1.0) for chunk_id in list(self.chunks_by_id)[:top_k]]
+        return [
+            RetrievalResult(chunk_id=chunk_id, score=1.0)
+            for chunk_id in list(self.chunks_by_id)[:top_k]
+        ]
 
 
 @pytest.fixture
 def graph(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("migrantbuddy.rag.nodes.ollama_generate", lambda *a, **kw: "a generated answer")
+    monkeypatch.setattr(
+        "migrantbuddy.rag.nodes.ollama_generate", lambda *a, **kw: "a generated answer"
+    )
     chunks = [make_chunk("c1", "https://example.com/a", "context text about salary")]
     return build_graph(FakeRetriever(chunks))
 
 
-def invoke(graph, thread_id: str, message: str):
+def invoke_to_interrupt(graph, thread_id: str, message: str):
+    """Runs summarize/rewrite_query/retrieve, pausing (checkpointed) before
+    generate -- matches how rag/service.py's prepare_turn() drives the
+    graph now that it's compiled with interrupt_before=["generate"]. The
+    graph can no longer produce a complete answer from a single plain
+    invoke() call; see rag/graph.py's module docstring.
+    """
     config = {"configurable": {"thread_id": thread_id}}
-    return graph.invoke({"messages": [HumanMessage(content=message)]}, config=config)
+    graph.invoke({"messages": [HumanMessage(content=message)]}, config=config)
+    return config
 
 
-def test_single_turn_produces_answer_and_sources(graph):
-    result = invoke(graph, "thread-1", "How much overtime pay am I entitled to?")
+def run_full_turn(graph, thread_id: str, message: str, answer: str = "a generated answer"):
+    """Full two-phase turn -- pause before generate, inject the answer,
+    resume to END -- matching rag/service.py's prepare_turn()+
+    finalize_turn() round trip.
+    """
+    config = invoke_to_interrupt(graph, thread_id, message)
+    context_chunks = graph.get_state(config).values["context_chunks"]
+    sources = [chunk.url for chunk in context_chunks]
+    graph.update_state(
+        config, {"messages": [AIMessage(content=answer)], "sources": sources}, as_node="generate"
+    )
+    return graph.invoke(None, config=config)
+
+
+def test_invoke_pauses_before_generate_with_context_ready(graph):
+    config = invoke_to_interrupt(graph, "thread-1", "How much overtime pay am I entitled to?")
+
+    state = graph.get_state(config).values
+    assert [chunk.url for chunk in state["context_chunks"]] == ["https://example.com/a"]
+    # generate_node hasn't run -- the last message is still the human's,
+    # not a generated AI answer.
+    assert isinstance(state["messages"][-1], HumanMessage)
+
+
+def test_resuming_after_update_state_completes_the_turn(graph):
+    result = run_full_turn(graph, "thread-1", "How much overtime pay am I entitled to?")
 
     assert result["messages"][-1].content == "a generated answer"
     assert result["sources"] == ["https://example.com/a"]
 
 
 def test_same_thread_id_accumulates_message_history(graph):
-    invoke(graph, "thread-1", "How much overtime pay am I entitled to?")
-    result = invoke(graph, "thread-1", "What about daily-rated workers?")
+    run_full_turn(graph, "thread-1", "How much overtime pay am I entitled to?")
+    result = run_full_turn(graph, "thread-1", "What about daily-rated workers?")
 
     # 2 human + 2 AI messages from the two turns.
     assert len(result["messages"]) == 4
@@ -56,8 +92,8 @@ def test_same_thread_id_accumulates_message_history(graph):
 
 
 def test_different_thread_ids_have_isolated_history(graph):
-    invoke(graph, "thread-1", "How much overtime pay am I entitled to?")
-    result = invoke(graph, "thread-2", "What about daily-rated workers?")
+    run_full_turn(graph, "thread-1", "How much overtime pay am I entitled to?")
+    result = run_full_turn(graph, "thread-2", "What about daily-rated workers?")
 
     # thread-2 has never been invoked before -- only this turn's messages.
     assert len(result["messages"]) == 2
@@ -65,11 +101,10 @@ def test_different_thread_ids_have_isolated_history(graph):
 
 
 def test_conversation_past_threshold_gets_summarized(monkeypatch: pytest.MonkeyPatch):
-    # Every turn after the first calls ollama_generate twice (rewrite +
-    # generate), plus a third time on whichever turn triggers
-    # summarization -- so this can't be a short, fixed-length response
-    # list. Distinguish by system prompt instead, since that's the one
-    # call whose *content* this test actually needs to check.
+    # Every turn after the first calls ollama_generate for rewrite (and for
+    # whichever turn triggers summarization) -- generate itself no longer
+    # calls it at all now (interrupt_before), so distinguish by system
+    # prompt for the one call whose *content* this test actually needs.
     from migrantbuddy.generation.prompts import SUMMARY_SYSTEM_PROMPT
 
     def fake_ollama_generate(system_prompt, user_prompt, *, model_name, max_tokens):
@@ -83,7 +118,7 @@ def test_conversation_past_threshold_gets_summarized(monkeypatch: pytest.MonkeyP
 
     result = None
     for i in range(7):
-        result = invoke(graph, "thread-1", f"question {i}")
+        result = run_full_turn(graph, "thread-1", f"question {i}")
 
     # SUMMARY_TRIGGER_MESSAGE_COUNT=12, MESSAGES_KEPT_VERBATIM=6 -- by the 7th
     # turn (13 messages: 7 human + 6 AI before this turn's own additions
@@ -140,4 +175,7 @@ def test_build_checkpointer_configures_redis_when_selected(monkeypatch: pytest.M
     assert isinstance(checkpointer, FakeRedisSaver)
     assert checkpointer.setup_called
     assert created["url"] == REDIS_URL
-    assert created["ttl"] == {"default_ttl": CONVERSATION_TTL_SECONDS // 60, "refresh_on_read": True}
+    assert created["ttl"] == {
+        "default_ttl": CONVERSATION_TTL_SECONDS // 60,
+        "refresh_on_read": True,
+    }

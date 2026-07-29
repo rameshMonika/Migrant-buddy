@@ -7,7 +7,17 @@ models/index). This is also the seam CLAUDE.md's Ollama -> vLLM production
 swap goes through: a vllm_client.py with the same `generate(...) -> str`
 signature can stand in for this module without generation/service.py
 changing at all.
+
+generate_stream() is the streaming counterpart used by /chat (rag/nodes.py's
+blocking generate() is kept for anything -- notebooks, tests -- that still
+wants a single complete string). Deliberately a plain synchronous generator
+over `requests.post(..., stream=True)`, not async/httpx -- consistent with
+the rest of this module, and Starlette's StreamingResponse accepts a plain
+sync generator directly (runs it in a thread pool internally), so no async
+rewrite is needed anywhere else in the call chain.
 """
+
+import json
 
 import requests
 
@@ -61,3 +71,50 @@ def generate(
     if data.get("done_reason") == "length":
         content = trim_to_last_complete_sentence(content)
     return content
+
+
+def generate_stream(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    model_name: str = GENERATION_MODEL_NAME,
+    base_url: str = OLLAMA_BASE_URL,
+    max_tokens: int = GENERATION_MAX_TOKENS,
+    keep_alive: str = OLLAMA_KEEP_ALIVE,
+    timeout: float = 120.0,
+    result_info: dict | None = None,
+):
+    """Yields text deltas as Ollama generates them (NDJSON -- one raw JSON
+    object per line, not SSE). Unlike generate(), does NOT apply the
+    truncation trim to what's yielded -- tokens already streamed to a live
+    client can't be un-shown. Instead, once the stream ends, records
+    done_reason into `result_info` (if given) so the caller can trim the
+    *saved* (not displayed) version of the accumulated text -- see
+    rag/service.py's finalize_turn().
+    """
+    response = requests.post(
+        f"{base_url}/api/chat",
+        json={
+            "model": model_name,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "stream": True,
+            "options": {"num_predict": max_tokens},
+            "keep_alive": keep_alive,
+        },
+        timeout=timeout,
+        stream=True,
+    )
+    response.raise_for_status()
+
+    for line in response.iter_lines():
+        if not line:
+            continue
+        data = json.loads(line)
+        content = data.get("message", {}).get("content", "")
+        if content:
+            yield content
+        if data.get("done") and result_info is not None:
+            result_info["done_reason"] = data.get("done_reason")

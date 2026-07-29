@@ -60,7 +60,9 @@ Question: {query}
 
 (Remember: answer ONLY in the same language as the question above, even though \
 the context is in English -- no English translation or parenthetical alongside it. \
-Keep it brief and finish as a complete thought -- do not cut off mid-sentence.)
+Keep it brief and finish as a complete thought -- do not cut off mid-sentence. Do \
+NOT add a worked example, sample calculation, or hypothetical scenario -- only give \
+one if the question above explicitly asks for it.)
 
 Answer:"""
 

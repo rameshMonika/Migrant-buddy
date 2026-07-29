@@ -54,9 +54,13 @@ def _call_backend(
     max_tokens: int = GENERATION_MAX_TOKENS,
 ) -> str:
     if backend == "ollama":
-        return ollama_generate(system_prompt, user_prompt, model_name=model_name, max_tokens=max_tokens)
+        return ollama_generate(
+            system_prompt, user_prompt, model_name=model_name, max_tokens=max_tokens
+        )
     elif backend == "vllm":
-        return vllm_generate(system_prompt, user_prompt, model_name=model_name, max_tokens=max_tokens)
+        return vllm_generate(
+            system_prompt, user_prompt, model_name=model_name, max_tokens=max_tokens
+        )
     raise ValueError(f"Unknown generation backend: {backend!r} (expected 'ollama' or 'vllm')")
 
 
@@ -97,11 +101,15 @@ def rewrite_query_node(state: ConversationState) -> dict:
         return {"standalone_query": latest}
 
     prompt = build_query_rewrite_prompt(summary, history, latest)
-    standalone_query = _call_backend(QUERY_REWRITE_SYSTEM_PROMPT, prompt, max_tokens=QUERY_REWRITE_MAX_TOKENS)
+    standalone_query = _call_backend(
+        QUERY_REWRITE_SYSTEM_PROMPT, prompt, max_tokens=QUERY_REWRITE_MAX_TOKENS
+    )
     return {"standalone_query": standalone_query}
 
 
-def make_retrieve_node(retriever: Retriever, *, top_k: int = 5, cache: RetrievalCache | None = None):
+def make_retrieve_node(
+    retriever: Retriever, *, top_k: int = 5, cache: RetrievalCache | None = None
+):
     @observe()
     def retrieve_node(state: ConversationState) -> dict:
         query = state.get("standalone_query") or state["messages"][-1].content

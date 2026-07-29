@@ -1,3 +1,3 @@
-from migrantbuddy.api.schemas import ChatRequest, ChatResponse
+from migrantbuddy.api.schemas import ChatRequest
 
-__all__ = ["ChatRequest", "ChatResponse"]
+__all__ = ["ChatRequest"]

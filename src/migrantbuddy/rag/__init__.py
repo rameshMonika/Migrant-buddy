@@ -1,4 +1,4 @@
-from migrantbuddy.rag.service import ConversationResult, ConversationService
+from migrantbuddy.rag.service import ConversationService, PreparedTurn
 from migrantbuddy.rag.state import ConversationState
 
-__all__ = ["ConversationResult", "ConversationService", "ConversationState"]
+__all__ = ["ConversationService", "ConversationState", "PreparedTurn"]
