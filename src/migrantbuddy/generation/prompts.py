@@ -12,7 +12,40 @@ language than relying on the system prompt alone.
 
 from typing import Sequence
 
+from langdetect import DetectorFactory, LangDetectException, detect
+
 from migrantbuddy.indexing import Chunk
+
+# Deterministic detection -- langdetect's default is seeded from wall-clock
+# time, which would make the same query detect differently across calls.
+DetectorFactory.seed = 0
+
+# Limited to languages SEA-LION targets (see CLAUDE.md Domain notes) plus
+# English. langdetect conflates Malay/Indonesian (both tag as "id" on short
+# text) -- labeled to say so explicitly rather than asserting the wrong one.
+_LANGUAGE_NAMES = {
+    "en": "English",
+    "ms": "Malay",
+    "id": "Malay or Indonesian",
+    "ta": "Tamil",
+    "my": "Burmese",
+    "th": "Thai",
+    "vi": "Vietnamese",
+    "tl": "Filipino (Tagalog)",
+}
+
+
+def detect_query_language(query: str) -> str | None:
+    """Best-effort language name for `query`, or None if detection fails or
+    lands outside `_LANGUAGE_NAMES` -- callers should fall back to a generic
+    instruction rather than asserting an unrecognized language.
+    """
+    try:
+        code = detect(query)
+    except LangDetectException:
+        return None
+    return _LANGUAGE_NAMES.get(code)
+
 
 SYSTEM_PROMPT = """You are migrantBuddy, an assistant that answers questions about \
 Singapore employment rules (work passes, salary, working hours) for migrant workers.
@@ -42,27 +75,50 @@ the person asking (e.g. shift work, overtime), only mention it, in one short \
 sentence, once your main answer is already complete -- if you are running low on \
 room, leave it out entirely rather than risk cutting off the main answer to fit it in.
 
-Always answer in the same language the question was asked in. The provided \
-context will always be in English regardless of the question's language -- \
-translate the relevant information into the question's language rather than \
-answering in English. Reply ONLY in that language -- never add an English \
-translation or parenthetical alongside it."""
+ABSOLUTE RULE, overriding every other instruction in this prompt: answer in the \
+exact same language the question was asked in -- never switch to a different \
+language, and never default to Malay (or any other language) just because the \
+context or this project's domain involves Singapore or Southeast Asia. The \
+provided context will always be in English regardless of the question's language \
+-- translate the relevant information into the question's language rather than \
+answering in English. If the question is in English, answer ONLY in English. \
+Reply ONLY in the question's language -- never add an English translation or \
+parenthetical alongside it, and never mix in words from another language."""
 
 
 def build_prompt(query: str, context_chunks: Sequence[Chunk]) -> str:
     context_text = "\n\n---\n\n".join(
         f"Source: {chunk.url}\n{chunk.text}" for chunk in context_chunks
     )
+    language_name = detect_query_language(query)
+    if language_name:
+        language_rule = (
+            f"(ABSOLUTE RULE: the question above is written in {language_name}. "
+            f"Your entire answer MUST be written in {language_name}, and in no other "
+            "language -- do not switch to Malay or any other language unless that is "
+            "literally the language just named. This overrides every other "
+            "instruction, including anything about the domain being Singapore- or "
+            "Southeast-Asia-related. No English translation or parenthetical "
+            "alongside it. Keep it brief and finish as a complete thought -- do not "
+            "cut off mid-sentence. Do NOT add a worked example, sample calculation, "
+            "or hypothetical scenario -- only give one if the question above "
+            "explicitly asks for it.)"
+        )
+    else:
+        language_rule = (
+            "(ABSOLUTE RULE: answer ONLY in the same language as the question above, "
+            "even though the context is in English -- no English translation or "
+            "parenthetical alongside it. Keep it brief and finish as a complete "
+            "thought -- do not cut off mid-sentence. Do NOT add a worked example, "
+            "sample calculation, or hypothetical scenario -- only give one if the "
+            "question above explicitly asks for it.)"
+        )
     return f"""Context:
 {context_text}
 
 Question: {query}
 
-(Remember: answer ONLY in the same language as the question above, even though \
-the context is in English -- no English translation or parenthetical alongside it. \
-Keep it brief and finish as a complete thought -- do not cut off mid-sentence. Do \
-NOT add a worked example, sample calculation, or hypothetical scenario -- only give \
-one if the question above explicitly asks for it.)
+{language_rule}
 
 Answer:"""
 

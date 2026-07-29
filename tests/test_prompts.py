@@ -3,6 +3,7 @@ from migrantbuddy.generation.prompts import (
     build_prompt,
     build_query_rewrite_prompt,
     build_summary_prompt,
+    detect_query_language,
 )
 from migrantbuddy.indexing import Chunk
 
@@ -76,6 +77,41 @@ def test_build_prompt_repeats_language_instruction_next_to_the_question():
         "Question: query"
     )
     assert prompt.rstrip().endswith("Answer:")
+
+
+def test_system_prompt_forbids_defaulting_to_malay():
+    # Regression check: the model answered an English question in Malay
+    # despite the pre-existing language instruction -- this makes the rule
+    # explicit rather than relying on the model to infer it never applies
+    # to English-in/English-out.
+    assert "never default to Malay" in SYSTEM_PROMPT
+    assert "ABSOLUTE RULE" in SYSTEM_PROMPT
+
+
+def test_detect_query_language_identifies_english():
+    assert detect_query_language("How much overtime pay am I entitled to?") == "English"
+
+
+def test_detect_query_language_returns_none_for_undetectable_text():
+    assert detect_query_language("query") is None
+
+
+def test_build_prompt_names_the_detected_language_as_an_absolute_rule():
+    # Regression check: the reminder previously only said "the same language
+    # as the question" without naming it -- naming the actual detected
+    # language is a harder constraint than asking the model to infer it.
+    prompt = build_prompt("How much overtime pay am I entitled to?", [])
+
+    assert "ABSOLUTE RULE" in prompt
+    assert "written in English" in prompt
+    assert prompt.index("ABSOLUTE RULE") > prompt.index("Question: How much overtime")
+
+
+def test_build_prompt_falls_back_to_generic_rule_when_language_undetectable():
+    prompt = build_prompt("query", [])
+
+    assert "ABSOLUTE RULE" in prompt
+    assert "answer ONLY in the same language as the question" in prompt
 
 
 def test_build_query_rewrite_prompt_includes_history_summary_and_followup():

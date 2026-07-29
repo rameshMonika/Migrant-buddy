@@ -1,8 +1,10 @@
 "use client";
 
+import { LiveAvatarSession, SessionEvent } from "@heygen/liveavatar-web-sdk";
 import { useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import LiveAvatar from "./components/LiveAvatar";
 
 type Message = {
   role: "user" | "assistant";
@@ -16,10 +18,21 @@ type TranscriptMessage = {
 };
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-// Separate service from API_BASE_URL -- the RAG service (chat) and the
-// Whisper service (speech-to-text) run as two independent processes, so the
-// frontend talks to each directly rather than one proxying the other.
+// Separate services from API_BASE_URL -- the RAG service (chat), the
+// Whisper service (speech-to-text), and the TTS service (voice output) run
+// as independent processes, so the frontend talks to each directly rather
+// than one proxying the other.
 const WHISPER_WS_URL = process.env.NEXT_PUBLIC_WHISPER_WS_URL ?? "ws://localhost:8002/transcribe/ws";
+const TTS_API_BASE_URL = process.env.NEXT_PUBLIC_TTS_API_BASE_URL ?? "http://localhost:8003";
+
+// A sentence is "complete" once it ends in one of these -- mirrors the
+// sentence-terminator set generation/truncation.py uses server-side for
+// the same reason (covers the scripts SEA-LION actually answers in).
+const SENTENCE_END_CHARS = new Set([".", "!", "?", "。", "!", "?", "؟", "၊", "။"]);
+
+function endsSentence(char: string): boolean {
+  return SENTENCE_END_CHARS.has(char);
+}
 
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -35,6 +48,91 @@ export default function ChatPage() {
   const [isTranscribing, setIsTranscribing] = useState(false);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const webSocketRef = useRef<WebSocket | null>(null);
+
+  // Text-to-speech + LiveAvatar (docs.liveavatar.com, LITE mode) -- LiveAvatar
+  // renders the lip-synced video server-side from audio we generate via
+  // ElevenLabs and push in via `repeatAudio()`; see tts/routes.py.
+  const [isMuted, setIsMuted] = useState(false);
+  const [isAvatarReady, setIsAvatarReady] = useState(false);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const liveAvatarSessionRef = useRef<LiveAvatarSession | null>(null);
+  const liveAvatarSessionPromiseRef = useRef<Promise<void> | null>(null);
+  // Text not yet forming a complete sentence -- flushed to TTS once it
+  // ends in sentence-terminating punctuation, rather than waiting for the
+  // whole answer (same reasoning as token-streaming the text itself).
+  const pendingSentenceRef = useRef("");
+  // The last complete sentence sent, passed to ElevenLabs as previous_text
+  // for prosody continuity across separate per-sentence audio clips.
+  const previousSentenceRef = useRef("");
+
+  // Lazily creates and starts the LiveAvatar session on the first message of
+  // the conversation -- kept idempotent (a single in-flight promise) since
+  // sendMessage can call this on every turn. Not started eagerly on page
+  // load: minting a session consumes LiveAvatar credits/quota even if the
+  // visitor never sends a message.
+  function ensureLiveAvatarSession(): Promise<void> {
+    if (liveAvatarSessionPromiseRef.current) {
+      return liveAvatarSessionPromiseRef.current;
+    }
+
+    const promise = (async () => {
+      const response = await fetch(`${TTS_API_BASE_URL}/session/start`, { method: "POST" });
+      if (!response.ok) {
+        throw new Error(`Failed to start avatar session: ${response.status}`);
+      }
+      const { session_token: sessionToken } = await response.json();
+
+      const session = new LiveAvatarSession(sessionToken, { voiceChat: false });
+      session.on(SessionEvent.SESSION_STREAM_READY, () => {
+        if (videoRef.current) {
+          session.attach(videoRef.current);
+          // Autoplay-with-audio can still be blocked by the browser even
+          // though this session was kicked off inside a user gesture (the
+          // WebRTC handshake itself takes long enough that some browsers'
+          // user-activation window has since expired) -- explicit play()
+          // with a caught rejection is a defensive fallback, not the
+          // primary mechanism.
+          void videoRef.current.play().catch(() => {});
+        }
+        setIsAvatarReady(true);
+      });
+      liveAvatarSessionRef.current = session;
+
+      await session.start();
+    })();
+
+    liveAvatarSessionPromiseRef.current = promise;
+    return promise;
+  }
+
+  async function sendSentenceToSpeak(sentence: string) {
+    const trimmed = sentence.trim();
+    if (!trimmed || isMuted) {
+      return;
+    }
+    const textForThisSentence = trimmed;
+    const previousText = previousSentenceRef.current;
+    previousSentenceRef.current = textForThisSentence;
+
+    try {
+      await ensureLiveAvatarSession();
+      const response = await fetch(`${TTS_API_BASE_URL}/speak`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          text: textForThisSentence,
+          previous_text: previousText || undefined,
+        }),
+      });
+      if (!response.ok) {
+        throw new Error(`Failed to generate speech: ${response.status}`);
+      }
+      const { audio_base64: audioBase64 } = await response.json();
+      liveAvatarSessionRef.current?.repeatAudio(audioBase64);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Voice output failed.");
+    }
+  }
 
   async function startRecording() {
     setError(null);
@@ -123,6 +221,12 @@ export default function ChatPage() {
       return;
     }
 
+    // Kicked off (not awaited) inside this user-gesture-triggered handler --
+    // starting the LiveAvatar session later, after the SSE round trip, would
+    // push the WebRTC handshake even further from the gesture that's meant
+    // to unlock autoplay-with-audio (see ensureLiveAvatarSession's comment).
+    void ensureLiveAvatarSession();
+
     setMessages((previous) => [
       ...previous,
       { role: "user", content: message },
@@ -134,6 +238,10 @@ export default function ChatPage() {
     setInput("");
     setIsLoading(true);
     setError(null);
+    // Fresh sentence-buffering state for this turn -- leftovers from a
+    // prior answer must not bleed into this one's TTS/previous_text.
+    pendingSentenceRef.current = "";
+    previousSentenceRef.current = "";
 
     try {
       const response = await fetch(`${API_BASE_URL}/chat`, {
@@ -173,8 +281,27 @@ export default function ChatPage() {
               updateLastMessage((last) => ({ ...last, sources: data.sources }));
             } else if (eventName === "token") {
               updateLastMessage((last) => ({ ...last, content: last.content + data.text }));
+
+              // Flush a complete sentence to TTS as soon as it's ready,
+              // rather than waiting for the whole answer -- same
+              // reasoning as token-streaming the text itself.
+              pendingSentenceRef.current += data.text;
+              let sentenceEnd = -1;
+              for (let i = 0; i < pendingSentenceRef.current.length; i++) {
+                if (endsSentence(pendingSentenceRef.current[i])) {
+                  sentenceEnd = i;
+                }
+              }
+              if (sentenceEnd !== -1) {
+                void sendSentenceToSpeak(pendingSentenceRef.current.slice(0, sentenceEnd + 1));
+                pendingSentenceRef.current = pendingSentenceRef.current.slice(sentenceEnd + 1);
+              }
+            } else if (eventName === "done" && pendingSentenceRef.current.trim()) {
+              // Flush whatever's left even without terminal punctuation --
+              // otherwise a short final clause never gets spoken at all.
+              void sendSentenceToSpeak(pendingSentenceRef.current);
+              pendingSentenceRef.current = "";
             }
-            // "done" needs no handling -- the loop ends when the stream closes.
           }
 
           boundary = buffer.indexOf("\n\n");
@@ -194,6 +321,10 @@ export default function ChatPage() {
         Ask a question about Singapore employment rules (salary, hours, work permits,
         medical insurance).
       </p>
+
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
+        <LiveAvatar videoRef={videoRef} isReady={isAvatarReady} />
+      </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 16 }}>
         {messages.map((message, index) => (
@@ -263,6 +394,13 @@ export default function ChatPage() {
           }}
         >
           {isRecording ? "⏹" : "🎤"}
+        </button>
+        <button
+          type="button"
+          onClick={() => setIsMuted((previous) => !previous)}
+          title={isMuted ? "Unmute voice output" : "Mute voice output"}
+        >
+          {isMuted ? "🔇" : "🔊"}
         </button>
         <button type="submit" disabled={isLoading || isTranscribing}>
           Send
