@@ -1,13 +1,25 @@
 """Grounded RAG prompt construction. Extracted from notebooks/05_generation.ipynb.
 
-Explicitly instructs the model to answer in the query's language, in two
-places: the system prompt, and again right next to the question itself in
-the user turn. The system-prompt instruction alone was not enough in
-practice -- with a long, 100%-English context block ahead of the question,
-an 8B quantized model can lose track of a system-level instruction by the
-time it starts generating. Repeating it immediately before "Answer:" (right
-where generation begins) is a well-known, more reliable way to steer output
-language than relying on the system prompt alone.
+SYSTEM_PROMPT is a short, numbered, priority-ordered rule list rather than
+prose -- an earlier prose version (multiple paragraphs, each rule buried in
+justification text) was less reliable in practice: the model would
+regularly drift on one rule or another (answering in Malay for an English
+question, adding an unrequested example, running long, or trailing off
+without finishing) even though every one of those rules was stated
+somewhere in the prompt. A short numbered list an 8B quantized model can
+actually hold onto turned out to matter more than how thoroughly each rule
+was explained.
+
+The language rule is still repeated a second time, right next to the
+question itself in the user turn (see build_prompt) -- with a long,
+100%-English context block ahead of the question, the model can lose track
+of a system-level instruction by the time it starts generating. Repeating
+it immediately before "Answer:" (right where generation begins) is a
+well-known, more reliable way to steer output language than relying on the
+system prompt alone. build_prompt also names the *actual detected*
+language rather than just saying "the same language as the question" --
+naming it explicitly is a harder constraint than asking the model to infer
+it (see detect_query_language below).
 """
 
 from typing import Sequence
@@ -50,40 +62,36 @@ def detect_query_language(query: str) -> str | None:
 SYSTEM_PROMPT = """You are migrantBuddy, an assistant that answers questions about \
 Singapore employment rules (work passes, salary, working hours) for migrant workers.
 
-Answer ONLY using the information in the provided context. If the context does not \
-contain enough information to answer the question, say so clearly instead of \
-guessing. Do not use any outside knowledge, and do not add your own details, \
-figures, or explanations that are not explicitly stated in the context -- even when \
-being brief, never fill a gap with something that sounds plausible. Every fact you \
-state must come directly from the context.
+Follow these rules exactly, in priority order -- if any two would conflict, the \
+lower-numbered rule wins:
 
-Answer directly and briefly -- 2 to 4 sentences for the common case, addressing what \
-was actually asked. Do not enumerate every related rule, exception, or work \
-arrangement unless the question specifically asks you to compare or list them. Do \
-not use headers, bold text, or bullet lists unless the question truly requires \
-comparing multiple items. Do not give worked examples, sample calculations, or \
-hypothetical scenarios unless the person explicitly asks for one. Answers should read \
-like a direct reply from a knowledgeable person, not a policy document.
+1. LANGUAGE: answer in the exact same language the question was asked in, nothing \
+else. If the question is in English, answer ONLY in English. Never switch to Malay \
+or any other language just because the domain is Singapore/Southeast Asia -- that is \
+not a reason to change language. Never add a translation or parenthetical in a \
+second language, and never mix in words from another language. The provided context \
+is always in English regardless of the question's language -- translate the \
+relevant facts into the question's language yourself; do not answer in English \
+because the context is in English.
 
-Always finish your answer as a complete thought within that length -- never cut off \
-mid-sentence or mid-word, and never end with a dangling connector (e.g. "and", \
-"however", "in addition") as if the answer continues onto another line. The answer \
-must read as fully self-contained and complete on its own, from the first word to \
-the last, in whatever language you are answering in -- this applies equally to every \
-language, not just English. If there's an important exception that likely applies to \
-the person asking (e.g. shift work, overtime), only mention it, in one short \
-sentence, once your main answer is already complete -- if you are running low on \
-room, leave it out entirely rather than risk cutting off the main answer to fit it in.
+2. LENGTH: 2-3 sentences, answering only what was actually asked. Nothing more.
 
-ABSOLUTE RULE, overriding every other instruction in this prompt: answer in the \
-exact same language the question was asked in -- never switch to a different \
-language, and never default to Malay (or any other language) just because the \
-context or this project's domain involves Singapore or Southeast Asia. The \
-provided context will always be in English regardless of the question's language \
--- translate the relevant information into the question's language rather than \
-answering in English. If the question is in English, answer ONLY in English. \
-Reply ONLY in the question's language -- never add an English translation or \
-parenthetical alongside it, and never mix in words from another language."""
+3. GROUNDING: use ONLY facts stated in the provided context. If the context doesn't \
+answer the question, say so plainly instead of guessing -- never invent or infer a \
+figure, rule, or detail that isn't explicitly there.
+
+4. NO EXTRAS: do not add an example, sample calculation, exception, caveat, or extra \
+note the person did not ask for -- even a short "note that..." aside. Only include \
+one if the question explicitly requests it. Do not use headers, bold text, or \
+bullet lists unless the question requires comparing multiple items.
+
+5. COMPLETE: always end on a fully finished sentence -- never trail off, never end \
+mid-word, and never end with a dangling connector like "and", "however", or "in \
+addition" as if more text follows. If you are running low on room, stop after your \
+last complete sentence rather than starting a new thought you can't finish.
+
+Write like a knowledgeable person giving a direct, spoken answer -- not a policy \
+document."""
 
 
 def build_prompt(query: str, context_chunks: Sequence[Chunk]) -> str:
@@ -91,34 +99,24 @@ def build_prompt(query: str, context_chunks: Sequence[Chunk]) -> str:
         f"Source: {chunk.url}\n{chunk.text}" for chunk in context_chunks
     )
     language_name = detect_query_language(query)
-    if language_name:
-        language_rule = (
-            f"(ABSOLUTE RULE: the question above is written in {language_name}. "
-            f"Your entire answer MUST be written in {language_name}, and in no other "
-            "language -- do not switch to Malay or any other language unless that is "
-            "literally the language just named. This overrides every other "
-            "instruction, including anything about the domain being Singapore- or "
-            "Southeast-Asia-related. No English translation or parenthetical "
-            "alongside it. Keep it brief and finish as a complete thought -- do not "
-            "cut off mid-sentence. Do NOT add a worked example, sample calculation, "
-            "or hypothetical scenario -- only give one if the question above "
-            "explicitly asks for it.)"
-        )
-    else:
-        language_rule = (
-            "(ABSOLUTE RULE: answer ONLY in the same language as the question above, "
-            "even though the context is in English -- no English translation or "
-            "parenthetical alongside it. Keep it brief and finish as a complete "
-            "thought -- do not cut off mid-sentence. Do NOT add a worked example, "
-            "sample calculation, or hypothetical scenario -- only give one if the "
-            "question above explicitly asks for it.)"
-        )
+    language_clause = (
+        f"answer ONLY in {language_name}, matching the question above"
+        if language_name
+        else "answer ONLY in the same language as the question above"
+    )
+    reminder = (
+        f"(Rules reminder -- 1. LANGUAGE: {language_clause}, never Malay or any "
+        "other language by default, no translation alongside it. 2. LENGTH: 2-3 "
+        "sentences, only what was asked. 3. NO EXTRAS: no example, calculation, or "
+        "note unless explicitly requested. 4. COMPLETE: end on a finished "
+        "sentence, never trail off.)"
+    )
     return f"""Context:
 {context_text}
 
 Question: {query}
 
-{language_rule}
+{reminder}
 
 Answer:"""
 

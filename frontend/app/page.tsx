@@ -25,6 +25,11 @@ const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8
 const WHISPER_WS_URL = process.env.NEXT_PUBLIC_WHISPER_WS_URL ?? "ws://localhost:8002/transcribe/ws";
 const TTS_API_BASE_URL = process.env.NEXT_PUBLIC_TTS_API_BASE_URL ?? "http://localhost:8003";
 
+// Voice + lip-sync (LiveAvatar/HeyGen + ElevenLabs) -- re-enabled now that
+// the earlier generation-quality bugs are fixed. Flip back to false to
+// disable the whole feature again without touching the implementation.
+const AVATAR_TTS_ENABLED = true;
+
 // A sentence is "complete" once it ends in one of these -- mirrors the
 // sentence-terminator set generation/truncation.py uses server-side for
 // the same reason (covers the scripts SEA-LION actually answers in).
@@ -106,6 +111,9 @@ export default function ChatPage() {
   }
 
   async function sendSentenceToSpeak(sentence: string) {
+    if (!AVATAR_TTS_ENABLED) {
+      return;
+    }
     const trimmed = sentence.trim();
     if (!trimmed || isMuted) {
       return;
@@ -225,7 +233,9 @@ export default function ChatPage() {
     // starting the LiveAvatar session later, after the SSE round trip, would
     // push the WebRTC handshake even further from the gesture that's meant
     // to unlock autoplay-with-audio (see ensureLiveAvatarSession's comment).
-    void ensureLiveAvatarSession();
+    if (AVATAR_TTS_ENABLED) {
+      void ensureLiveAvatarSession();
+    }
 
     setMessages((previous) => [
       ...previous,
@@ -315,97 +325,105 @@ export default function ChatPage() {
   }
 
   return (
-    <main style={{ maxWidth: 640, margin: "0 auto", padding: 24 }}>
+    <main style={{ maxWidth: 1100, margin: "0 auto", padding: 24 }}>
       <h1>migrantBuddy</h1>
       <p>
         Ask a question about Singapore employment rules (salary, hours, work permits,
         medical insurance).
       </p>
 
-      <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
-        <LiveAvatar videoRef={videoRef} isReady={isAvatarReady} />
-      </div>
+      <div style={{ display: "flex", gap: 24, alignItems: "flex-start" }}>
+        {AVATAR_TTS_ENABLED && (
+          <div style={{ flex: "0 0 420px" }}>
+            <LiveAvatar videoRef={videoRef} isReady={isAvatarReady} />
+          </div>
+        )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 16 }}>
-        {messages.map((message, index) => (
-          <div key={index} style={{ textAlign: message.role === "user" ? "right" : "left" }}>
-            <div
-              className={message.role === "assistant" ? "markdown-content" : undefined}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: 16 }}>
+            {messages.map((message, index) => (
+              <div key={index} style={{ textAlign: message.role === "user" ? "right" : "left" }}>
+                <div
+                  className={message.role === "assistant" ? "markdown-content" : undefined}
+                  style={{
+                    display: "inline-block",
+                    padding: "8px 12px",
+                    borderRadius: 8,
+                    background: message.role === "user" ? "#0366d6" : "#f0f0f0",
+                    color: message.role === "user" ? "#fff" : "#000",
+                    maxWidth: "80%",
+                    textAlign: "left",
+                  }}
+                >
+                  {message.role === "assistant" ? (
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+                  ) : (
+                    message.content
+                  )}
+                </div>
+                {message.sources && message.sources.length > 0 && (
+                  <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>
+                    Sources:{" "}
+                    {message.sources.map((source, sourceIndex) => (
+                      <a
+                        key={sourceIndex}
+                        href={source}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ marginRight: 8 }}
+                      >
+                        [{sourceIndex + 1}]
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+            {isLoading && <div style={{ color: "#666" }}>Thinking…</div>}
+            {error && <div style={{ color: "red" }}>{error}</div>}
+          </div>
+
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void sendMessage();
+            }}
+            style={{ display: "flex", gap: 8 }}
+          >
+            <input
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              placeholder={isTranscribing ? "Transcribing…" : "e.g. How much overtime pay am I entitled to?"}
+              disabled={isTranscribing}
+              style={{ flex: 1, padding: 8 }}
+            />
+            <button
+              type="button"
+              onClick={isRecording ? stopRecording : startRecording}
+              disabled={isLoading || isTranscribing}
+              title={isRecording ? "Stop recording" : "Record a question"}
               style={{
-                display: "inline-block",
-                padding: "8px 12px",
-                borderRadius: 8,
-                background: message.role === "user" ? "#0366d6" : "#f0f0f0",
-                color: message.role === "user" ? "#fff" : "#000",
-                maxWidth: "80%",
-                textAlign: "left",
+                background: isRecording ? "#d73a49" : undefined,
+                color: isRecording ? "#fff" : undefined,
               }}
             >
-              {message.role === "assistant" ? (
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
-              ) : (
-                message.content
-              )}
-            </div>
-            {message.sources && message.sources.length > 0 && (
-              <div style={{ fontSize: 12, color: "#666", marginTop: 4 }}>
-                Sources:{" "}
-                {message.sources.map((source, sourceIndex) => (
-                  <a
-                    key={sourceIndex}
-                    href={source}
-                    target="_blank"
-                    rel="noreferrer"
-                    style={{ marginRight: 8 }}
-                  >
-                    [{sourceIndex + 1}]
-                  </a>
-                ))}
-              </div>
+              {isRecording ? "⏹" : "🎤"}
+            </button>
+            {AVATAR_TTS_ENABLED && (
+              <button
+                type="button"
+                onClick={() => setIsMuted((previous) => !previous)}
+                title={isMuted ? "Unmute voice output" : "Mute voice output"}
+              >
+                {isMuted ? "🔇" : "🔊"}
+              </button>
             )}
-          </div>
-        ))}
-        {isLoading && <div style={{ color: "#666" }}>Thinking…</div>}
-        {error && <div style={{ color: "red" }}>{error}</div>}
+            <button type="submit" disabled={isLoading || isTranscribing}>
+              Send
+            </button>
+          </form>
+        </div>
       </div>
-
-      <form
-        onSubmit={(event) => {
-          event.preventDefault();
-          void sendMessage();
-        }}
-        style={{ display: "flex", gap: 8 }}
-      >
-        <input
-          value={input}
-          onChange={(event) => setInput(event.target.value)}
-          placeholder={isTranscribing ? "Transcribing…" : "e.g. How much overtime pay am I entitled to?"}
-          disabled={isTranscribing}
-          style={{ flex: 1, padding: 8 }}
-        />
-        <button
-          type="button"
-          onClick={isRecording ? stopRecording : startRecording}
-          disabled={isLoading || isTranscribing}
-          title={isRecording ? "Stop recording" : "Record a question"}
-          style={{
-            background: isRecording ? "#d73a49" : undefined,
-            color: isRecording ? "#fff" : undefined,
-          }}
-        >
-          {isRecording ? "⏹" : "🎤"}
-        </button>
-        <button
-          type="button"
-          onClick={() => setIsMuted((previous) => !previous)}
-          title={isMuted ? "Unmute voice output" : "Mute voice output"}
-        >
-          {isMuted ? "🔇" : "🔊"}
-        </button>
-        <button type="submit" disabled={isLoading || isTranscribing}>
-          Send
-        </button>
-      </form>
     </main>
   );
 }
