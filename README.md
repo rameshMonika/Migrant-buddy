@@ -4,8 +4,95 @@ RAG system for Singapore migrant workers — answers employment questions (salar
 working hours, work permits, medical insurance, contact info) grounded in official
 MOM documents, in whatever language the question was asked in.
 
-See `CLAUDE.md` for the full architecture and the decisions behind it. This file is
-just "how do I run it."
+See `CLAUDE.md` for the full architecture and the decisions behind it. This file
+covers what the project is, the stack it's built on, how to run it, how the RAG
+pipeline actually works, and the eval results behind the model/retrieval choices.
+
+## What it does
+
+A migrant worker asks a question — by typing, or by speaking into the browser — in
+English, Tamil, Burmese, Thai, Vietnamese, Malay, Filipino, or Indonesian. The system
+retrieves the relevant passage from official MOM (Ministry of Manpower) guidance and
+answers **in the language the question was asked in**, with an optional
+talking-avatar readback for workers who find spoken answers easier to trust or
+follow than text.
+
+The corpus is intentionally narrow and real, not a broad scrape: five MOM source
+pages across salary, working hours, work-permit conditions, medical insurance, and
+help/contact info. Three other candidate categories (employment rights, work injury/
+WICA, housing) were evaluated and dropped — their candidate URLs turned out to be
+navigation-only landing pages with no substantive content, confirmed by fetching them
+directly rather than assumed.
+
+The core design bet: a multilingual embedding model (BGE-M3) retrieves directly
+against non-English queries with no translation step, and a SEA-LION-tuned generation
+model answers natively in that language off English-source context — so translation
+never becomes a separate pipeline stage on either side of the request. See
+[How the RAG pipeline works](#how-the-rag-pipeline-works) below for how that's proven
+out, not just asserted.
+
+## Tech stack
+
+| Layer | Technology | Used for |
+|---|---|---|
+| Frontend | Next.js (TypeScript) | Chat UI, mic capture, streamed-answer rendering, hosts the LiveAvatar WebRTC session |
+| API | FastAPI (3 services: `rag`, `speech`, `tts`) | REST + SSE + WebSocket endpoints per service |
+| Conversation orchestration | LangGraph | Multi-turn state graph (summarize → rewrite query → retrieve → generate), checkpointed per `thread_id` |
+| Embedding | BGE-M3 (`sentence-transformers`) | Multilingual dense embeddings — retrieves non-English queries directly against the English corpus |
+| Lexical retrieval | `rank_bm25` | Sparse/lexical half of hybrid retrieval |
+| Vector store | Chroma | Persistent index of BGE-M3 embeddings, embedded in-process (no separate service) |
+| Reranker | SEA-LION-E5-Embedding-600M | Reorders hybrid retrieval's candidates — settled winner of a 6-way comparison, see [Evaluation results](#evaluation-results) |
+| Generation (dev) | Ollama | Local, fast-iteration generation serving |
+| Generation (prod) | vLLM | Continuous-batching/PagedAttention generation serving, 4-bit bitsandbytes-quantized for small-VRAM GPUs |
+| Generation model | `aisingapore/Llama-SEA-LION-v3-8B-IT` | Answers natively in the query's language — settled winner over `qwen3:8b`, see [Evaluation results](#evaluation-results) |
+| Ingestion | `trafilatura` | HTML → markdown extraction (tables kept inline, boilerplate stripped) |
+| Speech-to-text | `faster-whisper` | Streaming, multilingual, auto-detects language — no manual language toggle |
+| Text-to-speech | ElevenLabs | Synthesizes the spoken answer |
+| Avatar | LiveAvatar (HeyGen ecosystem), WebRTC | Lip-synced talking-avatar readback; browser connects to HeyGen directly after a server-minted session token |
+| Cache / state | Redis (Memurai on Windows) | LangGraph checkpointer, retrieval cache, rate limiting |
+| Evaluation | Ragas | Retrieval metrics (MRR/precision/recall/nDCG) + generation metrics (faithfulness, answer relevancy), judged by `llama3.1:8b` |
+| Observability | Langfuse | Per-stage tracing across retrieval and the conversation graph (opt-in) |
+| Orchestration | Docker Compose | 8-container local/prod stack — see [Run with Docker](#run-with-docker) |
+
+## Architecture
+
+Four services the team owns, plus backing stores/model runtimes, plus two
+third-party APIs — every internal hop is plain HTTP/WS on the Docker network's
+service-name DNS; every browser-facing hop goes through a published host port.
+
+```
+Browser (chat UI, mic, LiveAvatar WebRTC peer)
+   │  HTTPS + WS → localhost:3001
+   ▼
+frontend (Next.js)                         :3001 → 3000
+   │
+   ├─ HTTP  POST /chat (SSE), GET /health ─▶ rag       :8010 → 8000
+   ├─ WS    /transcribe/ws ────────────────▶ speech    :8002
+   └─ HTTP  /session/start, /speak ────────▶ tts       :8003
+                                                  │
+                        ┌─────────────────────────┼─────────────────────┐
+                        ▼                          ▼                     ▼
+              Chroma (embedded in rag)    Redis  :6379          Ollama :11434 / vLLM :8001
+              PersistentClient,           checkpointer +        generation backend,
+              ./data/processed volume     retrieval cache       env-switchable
+
+tts also calls out, server-side only (API keys never reach the browser):
+  → ElevenLabs API (speech synthesis)
+  → LiveAvatar/HeyGen API (mints a short-lived WebRTC session token; the browser
+    then opens its own WebRTC session straight to HeyGen's edge — that leg bypasses
+    rag/tts entirely)
+```
+
+**Why four separate services instead of one monolith:**
+- `rag` is latency-critical (streams tokens) and CPU/GPU-bound on embedding +
+  generation — kept lean, no audio dependencies weighing down its image or
+  cold-start.
+- `speech` pulls in `faster-whisper` and a large model cache (its own named volume)
+  independent of RAG's lifecycle — restarted/scaled without touching chat.
+- `tts` is two thin outbound HTTP clients (ElevenLabs, LiveAvatar) with no local
+  model — stays a lightweight, fast-building container.
+- Each ships as its own Docker build `target` from one shared `Dockerfile`, with its
+  own pushable image, for independent deploys.
 
 ## Prerequisites
 
@@ -421,8 +508,187 @@ in the Langfuse UI. Because this app can handle sensitive queries (e.g. workplac
 complaints), think about whether self-hosting Langfuse makes more sense than sending
 query text to a third-party cloud instance.
 
+## How the RAG pipeline works
+
+One request flows through offline ingestion (notebook-driven, run once per corpus
+change) and five online stages per turn: summarize → rewrite query → retrieve →
+rerank → generate.
+
+### Ingestion — fetch, extract, validate
+
+Five MOM source URLs, each hand-tagged with a `category` (salary, working-hours,
+work-permit, medical, help) — deliberately not a corpus-wide crawl:
+
+1. **Fetch & cache raw HTML** — plain `requests.get`, then the untouched HTML is
+   written to disk *before* any parsing, so extraction can be re-run and debugged
+   offline without re-hitting mom.gov.sg.
+2. **Extract to markdown** — `trafilatura.extract(..., include_tables=True,
+   favor_precision=False)`. `favor_precision=False` is deliberate: trafilatura's
+   precision mode trims aggressively and risks cutting real guidance text along with
+   boilerplate; recall matters more here.
+3. **Assemble the record** — stamps a stable `document_id` (slugified URL),
+   `authority="MOM"`, the per-source `category`, and `content_type=
+   "official_guidance"`. The corpus itself is monolingual English; multilinguality
+   lives entirely on the query side, not in the source documents.
+4. **Validate before trusting it** — hard-fails on a missing title, empty text, or
+   text under 500 characters (catches a page reduced to near-nothing after
+   boilerplate stripping). This is exactly how the WICA and housing pages got caught
+   and dropped.
+
+### Chunking — structure-aware, five deterministic passes
+
+Pure text transformation, no I/O or model loading. Token counting is a heuristic
+(`len(text) // 4`), not a real tokenizer — accurate enough to budget chunk sizes
+without a tokenizer dependency. Target: 300–500 tokens, 15–20% overlap, tuned
+against a naive fixed-window baseline across 300/500/800-token and 10%/20%-overlap
+variants.
+
+1. **Split on headings** — regex-matches `##`/`###` lines and walks them with a
+   level-aware stack, so each section keeps a full breadcrumb (e.g. *"Overtime pay >
+   How overtime pay is calculated"*).
+2. **Merge undersized sections** — heading-splitting alone leaves plenty of sections
+   smaller than the 300-token floor; adjacent sections are merged forward greedily
+   until the next one would exceed `chunk_size`.
+3. **Protect tables, then split oversized sections** — any section still over budget
+   is recursively split at paragraph boundaries with overlap. Every markdown table
+   is swapped for a placeholder before splitting, so the splitter can never land
+   inside one — tables stay whole even if that pushes a chunk over the nominal size.
+4. **Prefix a breadcrumb** — every chunk is prefixed with `"{document title} >
+   {heading path}"` before embedding, so a chunk retrieved on its own still carries
+   enough context to be understood.
+5. **Validate the invariant** — counts table blocks in the source vs. summed across
+   that document's chunks; raises if they don't match, catching a split table rather
+   than silently shipping a broken chunk.
+
+### Embedding — BGE-M3 (settled)
+
+`BAAI/bge-m3`, 1024-dim, multilingual — chosen specifically so queries in Tamil,
+Burmese, Thai, etc. retrieve directly against the English-source corpus with no
+pre-retrieval translation step.
+
+### Retrieval — hybrid BM25 + dense, then rerank (settled)
+
+Chroma indexes BGE-M3 dense vectors; `rank_bm25` runs lexical scoring in parallel;
+results are combined via Reciprocal Rank Fusion (constant 60) over the top-10
+candidates from each, then passed through a reranker. Six strategies were run
+head-to-head — see [Evaluation results](#evaluation-results) for why SEA-LION-E5
+reranking on top of hybrid retrieval won.
+
+**Open question, not yet resolved:** BM25's lexical overlap mostly disappears for
+non-English queries against an English corpus — worth splitting hybrid-vs-dense-only
+by query language rather than assuming BM25 helps uniformly.
+
+**Deferred, not built:** query rewriting + dual retrieval (retrieve on both the
+original and an English-translated query, then merge) as a targeted fix for that
+BM25 weakness — parked until real user query examples exist to confirm it's an
+actual problem.
+
+### Generation — SEA-LION 8B (settled)
+
+`aisingapore/Llama-SEA-LION-v3-8B-IT`, chosen over `qwen3:8b` at the same parameter
+class specifically to isolate language specialization from model size. Generates
+directly in the query's language — confirmed by a 10-query smoke test (7
+non-English) with no "answer in the query's language" instruction in the system
+prompt; it answered natively every time anyway.
+
+### Conversation memory — LangGraph
+
+Multi-turn state lives server-side, keyed by `thread_id` — the frontend only ever
+sends `{message, thread_id}`, never full history. A compiled `StateGraph` runs four
+nodes per turn:
+
+- **summarize** — no-op until conversation length crosses a threshold, then
+  condenses older turns instead of growing the prompt unboundedly.
+- **rewrite_query** — folds history + the latest message into a standalone
+  retrieval query. A bare follow-up like "what about for daily-rated workers?" has
+  almost no signal for the retriever on its own.
+- **retrieve** — the hybrid + SEA-LION-E5 rerank path above, optionally hitting the
+  Redis retrieval cache first.
+- **generate** — the graph is compiled with `interrupt_before=["generate"]`: it
+  pauses right before this node so `/chat` can stream the answer token-by-token from
+  outside the graph, then write the finished text back in and resume to `END`. A
+  deliberate two-phase invoke, not a single blocking call, purely to make streaming
+  and checkpointing compatible.
+
+## Evaluation results
+
+Every retrieval or prompt change that graduates out of a notebook carries a
+[Ragas](https://github.com/explodinggradients/ragas) run showing it didn't regress.
+Retrieval is scored on MRR/precision/recall/nDCG against a labeled (query,
+relevant-chunk) set; generation on faithfulness (groundedness to retrieved context)
+and answer relevancy, both judged by `llama3.1:8b`.
+
+### Reranker comparison
+
+10 labeled queries (7 non-English), 16-chunk corpus, k=3. Each query has exactly one
+labeled-relevant chunk, so `recall@3` is always identical to `hit@3`, and
+`precision@3` is always `hit@3 / 3` (capped at 0.333 even under perfect retrieval) —
+the real signal is MRR and nDCG@3, which are rank-position-sensitive:
+
+| Strategy | MRR | Hit@3 | P@3 | Recall@3 | nDCG@3 | Latency |
+|---|---|---|---|---|---|---|
+| BM25 only | 0.403 | 0.600 | 0.200 | 0.600 | 0.439 | 0.1ms |
+| hybrid_rerank + ms-marco-MiniLM | 0.425 | 0.500 | 0.167 | 0.500 | 0.426 | 267ms |
+| hybrid (BM25+dense, no rerank) | 0.783 | 0.900 | 0.300 | 0.900 | 0.813 | 55ms |
+| dense only (BGE-M3) | 0.875 | 0.900 | 0.300 | 0.900 | 0.863 | 137ms |
+| hybrid_rerank + bge-reranker-v2-m3 | 0.817 | 1.000 | 0.333 | 1.000 | 0.863 | 4772ms |
+| **hybrid_rerank + SEA-LION-E5** | **0.950** | 1.000 | 0.333 | 1.000 | **0.963** | 4872ms |
+
+Why each strategy lands where it does:
+- **BM25 only** misses the correct chunk in top-3 on 4 of 10 queries outright —
+  almost all non-English, where lexical term overlap against the English corpus
+  barely exists.
+- **hybrid_rerank + ms-marco-MiniLM** is *worse than no rerank at all* (0.425 vs
+  0.783 MRR): an English-only cross-encoder rescoring a 70%-non-English candidate
+  pool actively demotes correct chunks that RRF had already surfaced.
+- **hybrid (no rerank) scores below dense-only** despite identical hit@3 (0.900):
+  fusing in a noisy BM25 signal doesn't push the correct chunk out of the top 3, but
+  dilutes dense's already-strong ordering within it, bumping the right chunk from
+  1st to 2nd/3rd often enough to cost 0.09 MRR.
+- **bge-reranker-v2-m3 and SEA-LION-E5 tie on hit@3/recall@3** (both perfect 1.000)
+  but SEA-LION-E5 wins on MRR (0.950 vs 0.817) and nDCG@3 (0.963 vs 0.863) — it lands
+  the correct chunk at rank 1 more consistently, which is the whole point of a
+  SEA-LION-tuned reranker on an SEA-language-heavy query set. Latency between the two
+  is a wash (4772ms vs 4872ms) — the win is rank quality, not speed.
+
+Two numbers here are honestly unexplained rather than papered over: hybrid
+(no-rerank) clocking faster (55ms) than dense-only (137ms) despite doing strictly
+more work (dense + BM25 + fusion) — likely a benchmark-ordering/warm-up artifact,
+not confirmed; and SEA-LION-E5 (noted as a bi-encoder) costing the same latency as
+bge-reranker-v2-m3 (a true cross-encoder) despite the architecture difference.
+
+### Generation model comparison
+
+Ragas, judge `llama3.1:8b`, embeddings BGE-M3, retrieval held constant (hybrid +
+SEA-LION-E5 rerank) except where noted:
+
+| Run | Retrieval | Generation | n | Faithfulness | Answer Relevancy |
+|---|---|---|---|---|---|
+| A | dense only | qwen3:8b | 10 | 0.846 | 0.792 |
+| B | hybrid + SEA-LION-E5 | qwen3:8b | 10 | 0.771 | 0.774 |
+| C | hybrid + SEA-LION-E5 | qwen3:8b | 8* | 0.794 | 0.828 |
+| **06b** | hybrid + SEA-LION-E5 | **SEA-LION-v3-8B-IT** | 8* | **0.900** | 0.813 |
+
+\* Burmese and Thai queries dropped from the 10-query set — Burmese scored 1.0 in
+Run A vs 0.25 in Run B on the *identical* query (traced to qwen3 generation
+randomness, not a retrieval regression), and Thai scored 0.0 in every run regardless
+of model or retrieval (a judge limitation — `llama3.1:8b` struggles to verify
+Thai-language answers against English-source context). Both excluded so the
+generation-model comparison wasn't swamped by judge noise unrelated to what was
+being tested.
+
+Net: SEA-LION generation gives a real faithfulness edge (+0.106 over qwen3:8b on the
+same 8 queries, every SEA-LION answer scoring ≥0.7 vs two flagged qwen3:8b answers)
+at a small enough answer-relevancy cost (−0.015) to read as noise on 8 queries — a
+directional result, not a statistically robust one, but a real edge on the metric
+that matters most for a compliance-adjacent domain: don't say things that aren't in
+the source.
+
 ## Project status
 
-Research/prototyping phase. Core pipeline choices (BGE-M3 embedding, hybrid
-BM25+dense retrieval, SEA-LION-E5 reranker, SEA-LION 8B generation) are settled and
-extracted into `src/migrantbuddy/`; Docker/CI/CD/deploy haven't been set up yet.
+Core pipeline choices (BGE-M3 embedding, hybrid BM25+dense retrieval, SEA-LION-E5
+reranker, SEA-LION 8B generation) are settled and extracted into
+`src/migrantbuddy/`. The full stack — RAG, speech-to-text, TTS/avatar, frontend,
+LangGraph conversation memory, and Docker Compose orchestration — is built and
+running; the Redis-backed checkpointer is written but not yet verified against a
+live instance, and CI/CD/production deploy haven't been set up yet.
