@@ -96,7 +96,8 @@ proxying between any of them.
 ## Run with Docker
 
 An alternative to steps 1, 3, and 4 above — runs the RAG service, Whisper service,
-frontend, Redis, Ollama, and vLLM as six containers via one `docker-compose.yml`.
+TTS service, frontend, Redis, Ollama, and vLLM as seven containers via one
+`docker-compose.yml`.
 **Step 2 ("Build the data") is still a local prerequisite either way** — Docker doesn't
 run the ingestion/chunking/embedding notebook pipeline, it just bind-mounts whatever
 `data/processed/` those notebooks already produced on your machine (read-write, not
@@ -129,6 +130,7 @@ Check everything's up:
 ```powershell
 curl http://localhost:8010/health   # RAG (8000 is remapped to 8010 -- see note below)
 curl http://localhost:8002/health   # Whisper
+curl http://localhost:8003/health   # TTS
 curl http://localhost:8001/v1/models  # vLLM (once the model's finished loading)
 ```
 
@@ -150,19 +152,19 @@ installing natively) — switch back to `ollama` any time by editing that one en
 
 ### Pulling prebuilt images from Docker Hub instead of building locally
 
-`rag`, `speech`, and `frontend` each have an `image:` tag (`monikaramesh/migrantbuddy-*`)
-alongside their `build:` block in `docker-compose.yml`. `docker compose build`/`up`
-still build locally by default — this doesn't change your day-to-day workflow. It just
-means:
+`rag`, `speech`, `tts`, and `frontend` each have an `image:` tag
+(`monikaramesh/migrantbuddy-*`) alongside their `build:` block in
+`docker-compose.yml`. `docker compose build`/`up` still build locally by default —
+this doesn't change your day-to-day workflow. It just means:
 
 - **Publishing a new version** (after you've built locally and want to share it):
   ```powershell
-  docker compose push rag speech frontend
+  docker compose push rag speech tts frontend
   ```
 - **Running elsewhere without building** (e.g. a machine without this repo's full
   source, or without the ML dependencies' build requirements):
   ```powershell
-  docker compose pull rag speech frontend
+  docker compose pull rag speech tts frontend
   docker compose up
   ```
   `up` won't rebuild if a matching image already exists locally (from the pull), so

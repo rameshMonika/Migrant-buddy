@@ -1,6 +1,7 @@
-# Two independently runnable images (rag/speech) from one shared dependency
-# layer -- mirrors the RAG/Whisper service split in src/migrantbuddy/api vs
-# src/migrantbuddy/speech. Build with `--target rag` or `--target speech`.
+# Three independently runnable images (rag/speech/tts) from one shared
+# dependency layer -- mirrors the RAG/Whisper/TTS service split in
+# src/migrantbuddy/api vs src/migrantbuddy/speech vs src/migrantbuddy/tts.
+# Build with `--target rag`, `--target speech`, or `--target tts`.
 #
 # `pip install -e .` (editable) is deliberate, not a shortcut: config.py
 # computes PROJECT_ROOT as Path(__file__).resolve().parents[2], which only
@@ -33,3 +34,10 @@ RUN apt-get update \
 
 EXPOSE 8002
 CMD ["uvicorn", "migrantbuddy.speech.main:app", "--host", "0.0.0.0", "--port", "8002"]
+
+FROM base AS tts
+
+# No local model to load (ElevenLabs/LiveAvatar are remote APIs) -- no extra
+# system deps needed beyond the shared base layer.
+EXPOSE 8003
+CMD ["uvicorn", "migrantbuddy.tts.main:app", "--host", "0.0.0.0", "--port", "8003"]

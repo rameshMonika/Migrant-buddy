@@ -49,6 +49,9 @@ services:
       MIGRANTBUDDY_GENERATION_BACKEND: vllm
       MIGRANTBUDDY_REDIS_URL: redis://redis:6379
       MIGRANTBUDDY_FRONTEND_ORIGIN: http://localhost:3001
+      MIGRANTBUDDY_RETRIEVAL_CACHE_ENABLED: "true"
+      MIGRANTBUDDY_RETRIEVAL_CACHE_TTL_SECONDS: "86400"
+      MIGRANTBUDDY_RATE_LIMIT_ENABLED: "true"
     volumes:
       # Ingestion/chunking/embedding still run locally via the notebooks
       # (see README) -- Docker just needs the resulting chunks/Chroma
@@ -79,6 +82,19 @@ services:
     depends_on:
       - redis
 
+  tts:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: tts
+    image: monikaramesh/migrantbuddy-tts:latest
+    ports:
+      - "8003:8003"
+    env_file:
+      - .env
+    environment:
+      MIGRANTBUDDY_FRONTEND_ORIGIN: http://localhost:3001
+
   frontend:
     build:
       context: ./frontend
@@ -88,6 +104,7 @@ services:
         # build time, not read at container runtime. See Dockerfile comment.
         NEXT_PUBLIC_API_BASE_URL: http://localhost:8010
         NEXT_PUBLIC_WHISPER_WS_URL: ws://localhost:8002/transcribe/ws
+        NEXT_PUBLIC_TTS_API_BASE_URL: http://localhost:8003
     image: monikaramesh/migrantbuddy-frontend:latest
     ports:
       # Host port 3000 collided with an unrelated grafana container on
@@ -96,6 +113,7 @@ services:
     depends_on:
       - rag
       - speech
+      - tts
 
 volumes:
   redis-data:
