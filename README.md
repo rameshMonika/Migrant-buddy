@@ -53,26 +53,29 @@ Once these have run, `data/processed/` has everything the backend needs.
 
 ## 3. Run the backend services
 
-Two independent services, run as two separate processes -- the RAG service (chat)
-and the Whisper service (speech-to-text) don't depend on each other at runtime, so
-either can be started, stopped, or restarted alone:
+Three independent services, run as three separate processes -- the RAG service
+(chat), the Whisper service (speech-to-text), and the TTS service (voice output)
+don't depend on each other at runtime, so any of them can be started, stopped, or
+restarted alone:
 
 ```powershell
 uvicorn migrantbuddy.api.main:app --reload --port 8000       # RAG (chat)
 uvicorn migrantbuddy.speech.main:app --reload --port 8002    # Whisper (speech-to-text)
+uvicorn migrantbuddy.tts.main:app --reload --port 8003       # TTS (voice output)
 ```
 
-(Port 8001 is reserved for vLLM, hence 8002 here.)
+(Port 8001 is reserved for vLLM, hence 8002/8003 here.)
 
 Check they're up:
 
 ```powershell
 curl http://localhost:8000/health
 curl http://localhost:8002/health
+curl http://localhost:8003/health
 ```
 
-Only need voice input? Just skip the second command -- the chat UI works fine
-without the Whisper service running, it just means the 🎤 button won't connect.
+Only need some of these? The chat UI works fine without the Whisper/TTS services
+running -- it just means the 🎤 button won't connect and answers won't be spoken.
 
 ## 4. Run the frontend
 
@@ -84,9 +87,11 @@ npm run dev
 ```
 
 Open `http://localhost:3000`. The chat UI calls the RAG service at
-`NEXT_PUBLIC_API_BASE_URL` (set in `.env.local`, defaults to `http://localhost:8000`)
-and the Whisper service directly at `NEXT_PUBLIC_WHISPER_WS_URL` (defaults to
-`ws://localhost:8002/transcribe/ws`) -- there's no proxying between the two.
+`NEXT_PUBLIC_API_BASE_URL` (set in `.env.local`, defaults to `http://localhost:8000`),
+the Whisper service directly at `NEXT_PUBLIC_WHISPER_WS_URL` (defaults to
+`ws://localhost:8002/transcribe/ws`), and the TTS service directly at
+`NEXT_PUBLIC_TTS_API_BASE_URL` (defaults to `http://localhost:8003`) -- there's no
+proxying between any of them.
 
 ## Run with Docker
 
@@ -309,6 +314,16 @@ etc. — is a fixed architecture decision, not meant to vary by environment):
 | `MIGRANTBUDDY_WHISPER_RATE_LIMIT_ENABLED` | `false` | Rate-limit the Whisper service's `/transcribe/ws` (Redis) — own toggle/budget, separate from `/chat`'s |
 | `MIGRANTBUDDY_WHISPER_RATE_LIMIT_MAX_REQUESTS` | `10` | Max connections per client IP per window (only used when `WHISPER_RATE_LIMIT_ENABLED=true`) |
 | `MIGRANTBUDDY_WHISPER_RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate limit window, in seconds (only used when `WHISPER_RATE_LIMIT_ENABLED=true`) |
+| `ELEVENLABS_API_KEY` | unset (required) | Your ElevenLabs API key — the TTS service won't work without it |
+| `ELEVENLABS_VOICE_ID` | unset (required) | Which ElevenLabs voice to speak with — see below |
+| `MIGRANTBUDDY_ELEVENLABS_MODEL_ID` | `eleven_multilingual_v2` | ElevenLabs model — multilingual to match this project's target languages |
+| `MIGRANTBUDDY_TTS_RATE_LIMIT_ENABLED` | `false` | Rate-limit the TTS service's `/session/start` and `/speak` (Redis) — own toggle/budget, separate from `/chat`'s and Whisper's (ElevenLabs and LiveAvatar are both metered) |
+| `MIGRANTBUDDY_TTS_RATE_LIMIT_MAX_REQUESTS` | `10` | Max requests per client IP per window (only used when `TTS_RATE_LIMIT_ENABLED=true`) |
+| `MIGRANTBUDDY_TTS_RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate limit window, in seconds (only used when `TTS_RATE_LIMIT_ENABLED=true`) |
+| `LIVEAVATAR_API_KEY` | unset (required) | Your LiveAvatar API key — `/session/start` won't work without it |
+| `LIVEAVATAR_AVATAR_ID` | unset (required) | Which LiveAvatar avatar to render — from your LiveAvatar dashboard |
+| `MIGRANTBUDDY_LIVEAVATAR_API_URL` | `https://api.liveavatar.com` | LiveAvatar API base URL |
+| `MIGRANTBUDDY_LIVEAVATAR_IS_SANDBOX` | `true` | Sandbox mode — test without consuming LiveAvatar credits; turn off for a real end-to-end check |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST` | unset (tracing off) | Enables Langfuse tracing when **all three** are set — see below |
 
 ### Conversational memory backend
@@ -357,6 +372,41 @@ employment/legal-rights questions, where getting the question right matters.
 `MIGRANTBUDDY_WHISPER_MODEL_SIZE=small` by default, a balance of multilingual accuracy
 against CPU-only inference speed; bump it up if you have a GPU
 (`MIGRANTBUDDY_WHISPER_DEVICE=cuda`) or down if `small` is too slow.
+
+### Text-to-speech + avatar
+
+Runs as its own service (`migrantbuddy.tts.main`, port 8003 by default), independent
+of the RAG and Whisper services. The avatar itself is rendered by
+[LiveAvatar](https://docs.liveavatar.com) (HeyGen ecosystem), **LITE mode**: LiveAvatar
+streams a real, WebRTC-based, lip-synced avatar video straight to the browser, but does
+no TTS of its own in this mode — we generate the audio ourselves with ElevenLabs and
+feed it in.
+
+Flow: the frontend calls `POST /session/start` once per conversation (lazily, on the
+first message sent — not on page load, since minting a session consumes LiveAvatar
+credits) to get a short-lived session token, then uses
+[`@heygen/liveavatar-web-sdk`](https://github.com/heygen-com/liveavatar-web-sdk)
+client-side to connect and attach the video stream. As the chat answer streams in (see
+below), the frontend buffers tokens into complete sentences and, for each one, calls
+`POST /speak` (ElevenLabs, non-streaming, 24kHz PCM — the rate LiveAvatar's audio
+ingest requires) and passes the resulting audio straight into the session's
+`repeatAudio()`, which LiveAvatar lip-syncs and renders server-side — no local viseme
+analysis on our end. A mute toggle next to the mic button skips voice output entirely,
+since both ElevenLabs and LiveAvatar are metered.
+
+**Requires two separate accounts**: `ELEVENLABS_API_KEY`/`ELEVENLABS_VOICE_ID` (audio
+generation) and `LIVEAVATAR_API_KEY`/`LIVEAVATAR_AVATAR_ID` (avatar rendering) — the
+service will fail on first use without all four.
+`MIGRANTBUDDY_LIVEAVATAR_IS_SANDBOX` defaults to `true` so local dev/testing doesn't
+burn LiveAvatar credits; turn it off for a real end-to-end check.
+
+### Streaming answers
+
+`/chat` streams the answer back token-by-token (Server-Sent Events: `sources` once
+retrieval completes, then repeated `token` events, then `done`) rather than waiting
+for the full answer — reduces perceived latency since text (and, per above, audio)
+starts appearing well before generation finishes. This is the same event stream the
+TTS sentence-buffering logic in "Text-to-speech + avatar" reads from.
 
 ### Observability (Langfuse)
 

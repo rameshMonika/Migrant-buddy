@@ -29,6 +29,7 @@ dependencies = [
     "redis",
     "faster-whisper",
     "python-multipart",
+    "langdetect",
 ]
 
 [project.optional-dependencies]

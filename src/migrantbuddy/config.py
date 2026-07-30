@@ -40,12 +40,19 @@ CHUNK_OVERLAP = 100
 # Caps the generation backend's output length -- without this, a model that
 # starts rambling or repeating (a known failure mode for smaller quantized
 # models) has no ceiling and keeps generating until it hits a natural stop
-# or the model's max context, which can take a long time. 512 is generous
-# for a multi-paragraph answer with a few bullet points (the typical shape
-# of answers seen in notebooks/05_generation.ipynb) while still bounding
-# the worst case. Does not help "time to first token" (prompt processing) --
-# only bounds how long the output itself can run.
-GENERATION_MAX_TOKENS = 512
+# or the model's max context, which can take a long time. Lowered from 512
+# -- the original value was sized for a full multi-paragraph answer with
+# bullet points, but that shape turned out to be the problem: answers were
+# enumerating every related rule instead of addressing the actual question.
+# 400 gives SYSTEM_PROMPT's "finish as a complete thought" instruction
+# enough headroom to actually succeed -- 256 and 300 were both tried first
+# and still cut answers off mid-sentence in practice (confirmed via
+# done_reason/finish_reason, not guessed). ollama_client.py/vllm_client.py
+# additionally trim to the last complete sentence on the rare truncation
+# that still gets through, as a hard backstop -- this cap and that trim are
+# complementary, not alternatives. Does not help "time to first token"
+# (prompt processing) -- only bounds how long the output itself can run.
+GENERATION_MAX_TOKENS = 400
 
 # Conversational memory (rag/) -- once a conversation exceeds this many
 # messages, older ones get condensed into a running summary instead of
@@ -149,6 +156,37 @@ WHISPER_DEVICE = os.getenv("MIGRANTBUDDY_WHISPER_DEVICE", "cpu")
 # small accuracy cost; irrelevant if WHISPER_DEVICE=cuda later (GPU
 # inference would typically use float16 instead).
 WHISPER_COMPUTE_TYPE = os.getenv("MIGRANTBUDDY_WHISPER_COMPUTE_TYPE", "int8")
+
+# Rate limiting for the standalone TTS service's /speak/ws -- same
+# fixed-window Redis INCR+EXPIRE mechanism as RATE_LIMIT_*/WHISPER_RATE_LIMIT_*,
+# own toggle/budget since TTS (ElevenLabs, metered per character) is a
+# separate service/cost center from chat generation and transcription.
+TTS_RATE_LIMIT_ENABLED = os.getenv("MIGRANTBUDDY_TTS_RATE_LIMIT_ENABLED", "false").lower() == "true"
+TTS_RATE_LIMIT_MAX_REQUESTS = int(os.getenv("MIGRANTBUDDY_TTS_RATE_LIMIT_MAX_REQUESTS", "10"))
+TTS_RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("MIGRANTBUDDY_TTS_RATE_LIMIT_WINDOW_SECONDS", "60"))
+
+# Text-to-speech (ElevenLabs) -- no sensible defaults to guess for the key
+# or voice, both must be set explicitly. eleven_multilingual_v2 matches
+# this project's multilingual requirement (Burmese/Tamil/Thai/etc.),
+# unlike ElevenLabs' English-only models.
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
+ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID", "")
+ELEVENLABS_MODEL_ID = os.getenv("MIGRANTBUDDY_ELEVENLABS_MODEL_ID", "eleven_multilingual_v2")
+
+# LiveAvatar (docs.liveavatar.com, part of the HeyGen ecosystem) -- LITE mode
+# renders a real, WebRTC-streamed, lip-synced avatar video server-side,
+# driven by audio we supply (ElevenLabs, above). Replaces the old
+# Rhubarb-based viseme pipeline entirely -- LiveAvatar does the lip-sync
+# itself from the audio we feed it via `repeatAudio`, no local analysis
+# needed on our end. API key/avatar_id have no sensible default to guess;
+# get them from your LiveAvatar dashboard.
+LIVEAVATAR_API_KEY = os.getenv("LIVEAVATAR_API_KEY", "")
+LIVEAVATAR_AVATAR_ID = os.getenv("LIVEAVATAR_AVATAR_ID", "")
+LIVEAVATAR_API_URL = os.getenv("MIGRANTBUDDY_LIVEAVATAR_API_URL", "https://api.liveavatar.com")
+# Sandbox mode lets you test without consuming LiveAvatar credits -- on by
+# default so local dev/testing doesn't burn credits unless deliberately
+# turned off for a real end-to-end check.
+LIVEAVATAR_IS_SANDBOX = os.getenv("MIGRANTBUDDY_LIVEAVATAR_IS_SANDBOX", "true").lower() == "true"
 
 # Langfuse (observability/tracing) -- deliberately no default keys/host
 # here. Tracing only activates when both keys are set (see

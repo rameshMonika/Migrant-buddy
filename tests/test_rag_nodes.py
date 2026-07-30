@@ -2,7 +2,12 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage
 
 from migrantbuddy.indexing import Chunk
-from migrantbuddy.rag.nodes import generate_node, make_retrieve_node, rewrite_query_node, summarize_node
+from migrantbuddy.rag.nodes import (
+    generate_node,
+    make_retrieve_node,
+    rewrite_query_node,
+    summarize_node,
+)
 from migrantbuddy.retrieval import RetrievalResult
 
 
@@ -29,7 +34,10 @@ def make_messages(n: int) -> list:
 
 
 def test_summarize_node_is_noop_below_threshold(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("migrantbuddy.rag.nodes.ollama_generate", lambda *a, **kw: pytest.fail("should not be called"))
+    monkeypatch.setattr(
+        "migrantbuddy.rag.nodes.ollama_generate",
+        lambda *a, **kw: pytest.fail("should not be called"),
+    )
     state = {"messages": make_messages(12), "summary": ""}
 
     result = summarize_node(state)
@@ -121,7 +129,10 @@ def test_summarize_node_folds_existing_summary_into_prompt(monkeypatch: pytest.M
 
 
 def test_rewrite_query_node_skips_rewrite_on_first_turn(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("migrantbuddy.rag.nodes.ollama_generate", lambda *a, **kw: pytest.fail("should not be called"))
+    monkeypatch.setattr(
+        "migrantbuddy.rag.nodes.ollama_generate",
+        lambda *a, **kw: pytest.fail("should not be called"),
+    )
     state = {"messages": [HumanMessage(content="How much overtime pay?", id="1")], "summary": ""}
 
     result = rewrite_query_node(state)
@@ -130,7 +141,9 @@ def test_rewrite_query_node_skips_rewrite_on_first_turn(monkeypatch: pytest.Monk
 
 
 def test_rewrite_query_node_calls_backend_when_history_exists(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("migrantbuddy.rag.nodes.ollama_generate", lambda *a, **kw: "standalone rewritten query")
+    monkeypatch.setattr(
+        "migrantbuddy.rag.nodes.ollama_generate", lambda *a, **kw: "standalone rewritten query"
+    )
     state = {
         "messages": [
             HumanMessage(content="How much overtime pay if my salary is $3000?", id="1"),
@@ -149,7 +162,9 @@ def test_rewrite_query_node_calls_backend_when_only_summary_exists(monkeypatch: 
     # Edge case: everything except the latest message has already been
     # folded into a summary -- history is empty but summary isn't, so
     # rewriting should still happen (not treated as a first turn).
-    monkeypatch.setattr("migrantbuddy.rag.nodes.ollama_generate", lambda *a, **kw: "rewritten from summary")
+    monkeypatch.setattr(
+        "migrantbuddy.rag.nodes.ollama_generate", lambda *a, **kw: "rewritten from summary"
+    )
     state = {
         "messages": [HumanMessage(content="What about daily-rated workers?", id="1")],
         "summary": "Earlier the user asked about overtime pay for a $3000 salary.",
@@ -172,14 +187,20 @@ class FakeRetriever:
     def hybrid_rerank(self, query: str, top_k: int = 5):
         self.last_query = query
         self.last_top_k = top_k
-        return [RetrievalResult(chunk_id=chunk_id, score=1.0) for chunk_id in list(self.chunks_by_id)[:top_k]]
+        return [
+            RetrievalResult(chunk_id=chunk_id, score=1.0)
+            for chunk_id in list(self.chunks_by_id)[:top_k]
+        ]
 
 
 def test_retrieve_node_uses_standalone_query_when_present():
     chunks = [make_chunk("c1", "https://example.com/a", "text a")]
     retriever = FakeRetriever(chunks)
     node = make_retrieve_node(retriever, top_k=1)
-    state = {"messages": [HumanMessage(content="raw message", id="1")], "standalone_query": "rewritten query"}
+    state = {
+        "messages": [HumanMessage(content="raw message", id="1")],
+        "standalone_query": "rewritten query",
+    }
 
     result = node(state)
 
@@ -231,7 +252,10 @@ def test_retrieve_node_populates_cache_on_miss():
     retriever = FakeRetriever(chunks)
     cache = FakeCache(hit=None)
     node = make_retrieve_node(retriever, top_k=1, cache=cache)
-    state = {"messages": [HumanMessage(content="query", id="1")], "standalone_query": "rewritten query"}
+    state = {
+        "messages": [HumanMessage(content="query", id="1")],
+        "standalone_query": "rewritten query",
+    }
 
     node(state)
 
@@ -261,7 +285,9 @@ def test_retrieve_node_falls_through_on_stale_cache_entry():
 
 
 def test_generate_node_returns_ai_message_and_sources(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setattr("migrantbuddy.rag.nodes.ollama_generate", lambda *a, **kw: "the generated answer")
+    monkeypatch.setattr(
+        "migrantbuddy.rag.nodes.ollama_generate", lambda *a, **kw: "the generated answer"
+    )
     chunks = [make_chunk("c1", "https://example.com/a", "context text")]
     state = {"messages": [HumanMessage(content="query", id="1")], "context_chunks": chunks}
 
