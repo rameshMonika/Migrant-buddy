@@ -1,0 +1,520 @@
+<title>migrantBuddy — Interview Notes</title>
+<style>
+  :root {
+    --ink: #1b2027;
+    --ink-soft: #3a414c;
+    --paper: #faf7f0;
+    --paper-raised: #f1ece0;
+    --line: #ddd4c0;
+    --accent: #b3701f;
+    --accent-soft: #e7c088;
+    --accent-wash: #f4e4c6;
+    --teal: #2f6f63;
+    --teal-wash: #e0efe9;
+    --red: #a3402f;
+    --red-wash: #f6e3de;
+    --code-bg: #efe9db;
+    --shadow: 0 1px 2px rgba(27,32,39,0.06);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ink: #eae4d6;
+      --ink-soft: #b7ae9b;
+      --paper: #17161a;
+      --paper-raised: #201e21;
+      --line: #3a3730;
+      --accent: #dda85a;
+      --accent-soft: #6b5330;
+      --accent-wash: #2c2418;
+      --teal: #7ec3b1;
+      --teal-wash: #172622;
+      --red: #d98a76;
+      --red-wash: #2b1c18;
+      --code-bg: #201e1c;
+      --shadow: 0 1px 2px rgba(0,0,0,0.4);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #eae4d6; --ink-soft: #b7ae9b; --paper: #17161a; --paper-raised: #201e21;
+    --line: #3a3730; --accent: #dda85a; --accent-soft: #6b5330; --accent-wash: #2c2418;
+    --teal: #7ec3b1; --teal-wash: #172622; --red: #d98a76; --red-wash: #2b1c18;
+    --code-bg: #201e1c; --shadow: 0 1px 2px rgba(0,0,0,0.4);
+  }
+  :root[data-theme="light"] {
+    --ink: #1b2027; --ink-soft: #3a414c; --paper: #faf7f0; --paper-raised: #f1ece0;
+    --line: #ddd4c0; --accent: #b3701f; --accent-soft: #e7c088; --accent-wash: #f4e4c6;
+    --teal: #2f6f63; --teal-wash: #e0efe9; --red: #a3402f; --red-wash: #f6e3de;
+    --code-bg: #efe9db; --shadow: 0 1px 2px rgba(27,32,39,0.06);
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, ui-serif, serif;
+    line-height: 1.55;
+  }
+  .sans { font-family: "Segoe UI", ui-sans-serif, -apple-system, system-ui, sans-serif; }
+  code, .mono, .num { font-family: "Cascadia Code", ui-monospace, "SF Mono", Consolas, monospace; font-variant-numeric: tabular-nums; }
+
+  .shell { display: grid; grid-template-columns: 240px minmax(0,760px); gap: 56px; max-width: 1080px; margin: 0 auto; padding: 48px 24px 120px; }
+  @media (max-width: 880px) { .shell { grid-template-columns: 1fr; } nav.toc { position: static !important; } }
+
+  nav.toc { position: sticky; top: 40px; align-self: start; font-family: "Segoe UI", ui-sans-serif, sans-serif; }
+  nav.toc .kicker { font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-soft); margin-bottom: 12px; }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: toc; border-left: 1px solid var(--line); }
+  nav.toc li { counter-increment: toc; margin: 0; }
+  nav.toc a {
+    display: block; padding: 6px 0 6px 16px; margin-left: -1px; border-left: 1px solid transparent;
+    color: var(--ink-soft); text-decoration: none; font-size: 13.5px;
+  }
+  nav.toc a:hover, nav.toc a:focus-visible { color: var(--accent); border-left-color: var(--accent); }
+  nav.toc a::before { content: counter(toc, decimal-leading-zero) "  "; color: var(--accent); font-family: var(--mono); }
+
+  header.masthead { margin-bottom: 8px; }
+  header.masthead .kicker { font-family: "Segoe UI", ui-sans-serif, sans-serif; font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--accent); margin-bottom: 10px; }
+  h1 { font-size: 40px; line-height: 1.1; margin: 0 0 10px; text-wrap: balance; font-weight: 600; letter-spacing: -0.01em; }
+  .subhead { font-family: "Segoe UI", ui-sans-serif, sans-serif; color: var(--ink-soft); font-size: 15.5px; max-width: 60ch; margin: 0 0 6px; }
+  .meta-row { font-family: "Segoe UI", ui-sans-serif, sans-serif; font-size: 12.5px; color: var(--ink-soft); display: flex; gap: 18px; margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+  .meta-row b { color: var(--ink); font-weight: 600; }
+
+  section { margin-top: 64px; scroll-margin-top: 32px; }
+  section > .section-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+  section > .section-head .n { font-family: "Segoe UI", ui-sans-serif, sans-serif; color: var(--accent); font-size: 13px; font-weight: 700; }
+  h2 { font-size: 25px; margin: 0 0 18px; font-weight: 600; text-wrap: balance; }
+  h3 { font-size: 17.5px; margin: 30px 0 8px; font-weight: 600; color: var(--ink); }
+  p { margin: 0 0 14px; max-width: 66ch; }
+  .lede { font-size: 17px; color: var(--ink-soft); max-width: 62ch; }
+  ul, ol.plain { margin: 0 0 14px; padding-left: 22px; }
+  li { margin-bottom: 6px; max-width: 62ch; }
+  a { color: var(--accent); }
+
+  .pill { display: inline-block; font-family: "Segoe UI", ui-sans-serif, sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 0.03em; padding: 2px 8px; border-radius: 3px; }
+  .pill-settled { background: var(--teal-wash); color: var(--teal); }
+  .pill-live { background: var(--accent-wash); color: var(--accent); }
+  .pill-deferred { background: var(--red-wash); color: var(--red); }
+
+  .callout { background: var(--paper-raised); border-left: 3px solid var(--accent); padding: 14px 18px; border-radius: 0 4px 4px 0; margin: 18px 0; font-family: "Segoe UI", ui-sans-serif, sans-serif; font-size: 14.5px; color: var(--ink-soft); }
+  .callout b { color: var(--ink); }
+  .callout.teal { border-left-color: var(--teal); }
+
+  /* architecture diagram */
+  .diagram { font-family: "Segoe UI", ui-sans-serif, sans-serif; font-size: 12.5px; overflow-x: auto; padding: 4px 4px 12px; margin: 8px 0 4px; }
+  .diagram-inner { min-width: 660px; }
+  .row { display: flex; align-items: stretch; gap: 10px; }
+  .row + .row { margin-top: 10px; }
+  .box { border: 1px solid var(--line); background: var(--paper-raised); border-radius: 6px; padding: 10px 12px; flex: 1; box-shadow: var(--shadow); }
+  .box .t { font-weight: 700; color: var(--ink); margin-bottom: 2px; }
+  .box .d { color: var(--ink-soft); font-size: 11.5px; line-height: 1.4; }
+  .box.accent { border-color: var(--accent-soft); background: var(--accent-wash); }
+  .box.teal { border-color: var(--teal); background: var(--teal-wash); }
+  .arrow-down { text-align: center; color: var(--ink-soft); font-size: 16px; line-height: 1; margin: 2px 0; }
+  .stack-label { text-align: center; font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft); margin: 18px 0 6px; }
+  .net-label { text-align: center; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-soft); margin: 2px 0 10px; }
+  .boundary { border: 1.5px dashed var(--line); border-radius: 10px; padding: 14px 14px 4px; margin: 6px 0; }
+  .box.client { border-style: solid; border-color: var(--line); background: var(--paper); }
+  .box.external { border-style: dashed; background: var(--paper); }
+  .box .port { display: inline-block; margin-top: 6px; font-family: "Cascadia Code", ui-monospace, monospace; font-size: 11px; background: var(--code-bg); color: var(--ink); padding: 1px 6px; border-radius: 3px; }
+  .box .proto { color: var(--accent); font-weight: 600; }
+  .diagram-note { font-family: "Segoe UI", ui-sans-serif, sans-serif; font-size: 12.5px; color: var(--ink-soft); text-align: center; margin: 10px 0 0; padding: 8px 10px; border-top: 1px dashed var(--line); }
+
+  /* chunking pipeline */
+  .steps { counter-reset: step; margin: 10px 0 22px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .step { display: grid; grid-template-columns: 44px 1fr; }
+  .step + .step { border-top: 1px solid var(--line); }
+  .step .idx { counter-increment: step; background: var(--paper-raised); display: flex; align-items: flex-start; justify-content: center; padding-top: 14px; font-family: "Segoe UI", ui-sans-serif, sans-serif; font-weight: 700; color: var(--accent); font-size: 13px; }
+  .step .idx::before { content: counter(step); }
+  .step .body { padding: 12px 16px 14px 0; }
+  .step .body h4 { margin: 0 0 4px; font-size: 14.5px; font-family: "Segoe UI", ui-sans-serif, sans-serif; font-weight: 700; }
+  .step .body p { margin: 0; font-size: 13.5px; color: var(--ink-soft); }
+  .step .body .fn { color: var(--accent); }
+
+  /* pipeline flow */
+  .flow { display: flex; align-items: center; gap: 0; overflow-x: auto; padding: 12px 2px 18px; margin: 8px 0; }
+  .flow-step { flex: 0 0 auto; min-width: 128px; border: 1px solid var(--line); background: var(--paper-raised); border-radius: 6px; padding: 10px 12px; box-shadow: var(--shadow); }
+  .flow-step .k { font-family: "Segoe UI", ui-sans-serif, sans-serif; font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
+  .flow-step .v { font-family: "Segoe UI", ui-sans-serif, sans-serif; font-size: 13px; font-weight: 600; }
+  .flow-arrow { flex: 0 0 auto; color: var(--ink-soft); padding: 0 10px; font-size: 15px; }
+
+  table { width: 100%; border-collapse: collapse; font-family: "Segoe UI", ui-sans-serif, sans-serif; font-size: 13.5px; }
+  .table-wrap { overflow-x: auto; margin: 10px 0 22px; border: 1px solid var(--line); border-radius: 6px; }
+  th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  thead th { background: var(--paper-raised); font-weight: 600; font-size: 11.5px; letter-spacing: 0.03em; text-transform: uppercase; color: var(--ink-soft); }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num, th.num { font-family: "Cascadia Code", ui-monospace, monospace; font-variant-numeric: tabular-nums; }
+  td.best { color: var(--teal); font-weight: 700; }
+  td.worst { color: var(--red); }
+
+  .card-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 10px 0 22px; }
+  @media (max-width: 620px) { .card-grid { grid-template-columns: 1fr; } }
+  .card { border: 1px solid var(--line); border-radius: 6px; padding: 14px 16px; background: var(--paper-raised); }
+  .card h4 { margin: 0 0 6px; font-size: 14px; font-family: "Segoe UI", ui-sans-serif, sans-serif; font-weight: 700; }
+  .card p { margin: 0; font-size: 13px; color: var(--ink-soft); font-family: "Segoe UI", ui-sans-serif, sans-serif; }
+
+  .qa { border-top: 1px solid var(--line); padding: 16px 0; }
+  .qa:last-child { border-bottom: 1px solid var(--line); }
+  .qa .q { font-weight: 600; margin-bottom: 6px; }
+  .qa .q::before { content: "Q — "; color: var(--accent); font-family: "Segoe UI", ui-sans-serif, sans-serif; font-size: 12px; letter-spacing: 0.04em; }
+  .qa .a { color: var(--ink-soft); font-size: 15px; }
+
+  footer { margin-top: 72px; padding-top: 20px; border-top: 1px solid var(--line); font-family: "Segoe UI", ui-sans-serif, sans-serif; font-size: 12.5px; color: var(--ink-soft); }
+
+  ::selection { background: var(--accent-soft); color: var(--ink); }
+</style>
+
+<div class="shell">
+  <nav class="toc">
+    <div class="kicker">Contents</div>
+    <ol>
+      <li><a href="#overview">What it does</a></li>
+      <li><a href="#architecture">System architecture</a></li>
+      <li><a href="#rag">RAG pipeline methods</a></li>
+      <li><a href="#eval">Evaluation &amp; results</a></li>
+      <li><a href="#other">Speech, TTS &amp; avatar</a></li>
+      <li><a href="#infra">Infra &amp; serving</a></li>
+      <li><a href="#qa">Likely interview Q&amp;A</a></li>
+    </ol>
+  </nav>
+
+  <main>
+    <header class="masthead">
+      <div class="kicker">Interview Notes · Project Deep-Dive</div>
+      <h1>migrantBuddy</h1>
+      <p class="subhead">A retrieval-augmented assistant that answers Singapore migrant workers' questions — salary, working hours, permit conditions, medical insurance, help &amp; contact info — grounded in official MOM guidance, in the worker's own language.</p>
+      <div class="meta-row">
+        <span><b>Stack</b> FastAPI + LangGraph · Next.js · Chroma · Redis · Ollama/vLLM</span>
+        <span><b>Status</b> full stack running, dockerized</span>
+        <span><b>Languages</b> EN + 7 SEA-LION languages</span>
+      </div>
+    </header>
+
+    <section id="overview">
+      <div class="section-head"><span class="n">01</span></div>
+      <h2>What it does</h2>
+      <p class="lede">A migrant worker asks a question — by text, or by speaking into the browser — in English, Tamil, Burmese, Thai, Vietnamese, Malay, Filipino or Indonesian. The system retrieves the relevant passage from MOM's official guidance, and answers <em>in the language the question was asked in</em>, with an optional talking-avatar readback for workers who find spoken answers easier to trust or follow than text.</p>
+      <p>The corpus is intentionally narrow and real: five MOM source pages across salary, working hours, work-permit conditions, medical insurance, and help/contact info — chosen over a broader scrape because three other candidate categories (employment rights, work injury/WICA, housing) turned out to be navigation-only landing pages with no real content on the sourced URL, and were dropped rather than ingested as near-empty stubs.</p>
+      <div class="callout">
+        <b>The core design bet:</b> a multilingual embedding model (BGE-M3) can retrieve directly against non-English queries without a translation step, and a SEA-LION-tuned generation model can answer natively in that language off English-source context — so translation never becomes a separate pipeline stage on either side of the request.
+      </div>
+    </section>
+
+    <section id="architecture">
+      <div class="section-head"><span class="n">02</span></div>
+      <h2>System architecture</h2>
+      <p>Eight containers, one Docker Compose stack: four services the team owns (frontend, rag, speech, tts), three backing stores/model runtimes (Chroma embedded in-process, Redis, Ollama, vLLM), and two third-party APIs reached over the open internet. Every internal hop is plain HTTP/WS on the compose network's DNS (service name as hostname); every browser-facing hop goes through a published host port, and two of those host ports were reassigned because something else on the dev machine already held :8000 and :3000.</p>
+
+      <div class="diagram">
+        <div class="diagram-inner">
+          <div class="net-label">client device — outside the docker network</div>
+          <div class="row">
+            <div class="box client" style="flex:1"><div class="t">Browser</div><div class="d">chat UI · mic capture · plays back TTS audio · hosts the LiveAvatar WebRTC peer connection</div></div>
+          </div>
+
+          <div class="arrow-down"><span class="proto">HTTPS + WS</span> → host <span class="port">localhost:3001</span></div>
+
+          <div class="boundary">
+            <div class="net-label">docker network — migrantbuddy_default</div>
+            <div class="row">
+              <div class="box accent" style="flex:1">
+                <div class="t">frontend <span class="port">3001→3000</span></div>
+                <div class="d">Next.js (TS) · build-time env bakes in the three API base URLs below (browser can't resolve compose DNS, only published ports)</div>
+              </div>
+            </div>
+
+            <div class="arrow-down">↓ 3 independent client connections from the browser, proxied through nothing</div>
+
+            <div class="row">
+              <div class="box">
+                <div class="t">rag <span class="port">8010→8000</span></div>
+                <div class="d"><span class="proto">HTTP</span> POST /chat (SSE stream) · GET /health · LangGraph graph + ConversationService</div>
+              </div>
+              <div class="box">
+                <div class="t">speech <span class="port">8002</span></div>
+                <div class="d"><span class="proto">WS</span> /transcribe/ws · faster-whisper streaming transcription</div>
+              </div>
+              <div class="box">
+                <div class="t">tts <span class="port">8003</span></div>
+                <div class="d"><span class="proto">HTTP</span> /session/start · voice + avatar token minting</div>
+              </div>
+            </div>
+
+            <div class="arrow-down">↓ internal-only, compose DNS (service name as hostname)</div>
+
+            <div class="row">
+              <div class="box teal">
+                <div class="t">Chroma <span class="port">embedded</span></div>
+                <div class="d">no network hop — runs in-process inside <b>rag</b> as a <code>PersistentClient</code>; state on a bind-mounted volume, <code>./data/processed</code></div>
+              </div>
+              <div class="box teal">
+                <div class="t">redis <span class="port">6379</span></div>
+                <div class="d">LangGraph checkpointer (thread_id-keyed, TTL) + retrieval cache · used by <b>rag</b> + <b>speech</b></div>
+              </div>
+              <div class="box teal">
+                <div class="t">ollama <span class="port">11434</span></div>
+                <div class="d">dev generation backend · named volume for pulled models</div>
+              </div>
+              <div class="box teal">
+                <div class="t">vllm <span class="port">8001</span></div>
+                <div class="d">prod generation backend, active by default in compose · 4-bit bitsandbytes quant (fits 8GB VRAM) · own compose file, <code>include</code>d</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="arrow-down"><span class="proto">HTTPS</span>, server-side only — API keys never leave these two containers</div>
+
+          <div class="row">
+            <div class="box external"><div class="t">ElevenLabs API</div><div class="d">tts → text-to-speech synthesis</div></div>
+            <div class="box external"><div class="t">LiveAvatar / HeyGen API</div><div class="d">tts → mints a short-lived WebRTC session token</div></div>
+          </div>
+
+          <div class="diagram-note">After the token is minted, the browser opens its <b>own</b> WebRTC session straight to HeyGen's edge for the avatar video/audio — that leg bypasses <code>rag</code>/<code>tts</code> entirely and never touches the docker network.</div>
+        </div>
+      </div>
+
+      <h3>Why four services, not one monolith</h3>
+      <ul>
+        <li><b>rag</b> is latency-critical (streams tokens) and CPU/GPU-bound on embedding + generation — kept lean, no audio dependencies dragging its image size or cold-start up.</li>
+        <li><b>speech</b> pulls in <code>faster-whisper</code> and a large model cache (its own named volume, <code>whisper-hf-cache</code>) that's independent of RAG's lifecycle — restarted/scaled without touching chat.</li>
+        <li><b>tts</b> is two thin outbound HTTP clients (ElevenLabs, LiveAvatar) with no local model — stays a lightweight, fast-building container.</li>
+        <li>Each ships as its own Docker build <code>target</code> from one shared <code>Dockerfile</code>, and its own pushable image (<code>migrantbuddy-rag</code>, <code>-speech</code>, <code>-tts</code>, <code>-frontend</code>) for independent deploys.</li>
+        <li>Host ports 8000 and 3000 collided with unrelated containers already running on the dev box (a Prometheus exporter, a Grafana instance) — republished on 8010/3001. The container-internal ports (8000, 3000) are untouched; only the host side moved, which is why the frontend's build-time <code>NEXT_PUBLIC_*</code> URLs point at :8010, not :8000.</li>
+      </ul>
+    </section>
+
+    <section id="rag">
+      <div class="section-head"><span class="n">03</span></div>
+      <h2>RAG pipeline — methods at each stage</h2>
+      <p>One request flows through ingestion (offline, notebook-driven) and then five online stages per turn: summarize → rewrite query → retrieve → rerank → generate.</p>
+
+      <div class="flow">
+        <div class="flow-step"><div class="k">Offline</div><div class="v">Ingest &amp; chunk</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="k">01</div><div class="v">Summarize</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="k">02</div><div class="v">Rewrite query</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="k">03</div><div class="v">Retrieve (hybrid)</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="k">04</div><div class="v">Rerank</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-step"><div class="k">05</div><div class="v">Generate</div></div>
+      </div>
+
+      <h3>Ingestion — fetch, extract, validate</h3>
+      <p>Five MOM source URLs, each hand-tagged with a <code>category</code> (salary, working-hours, work-permit, medical, help) via a <code>SourceSpec</code> — deliberately not a corpus-wide crawl. Per source:</p>
+      <div class="steps">
+        <div class="step"><div class="idx"></div><div class="body">
+          <h4>Fetch &amp; cache raw HTML</h4>
+          <p>Plain <code>requests.get</code> with a declared User-Agent, then the untouched HTML is written to disk <em>before</em> any parsing (<span class="fn">cache_raw_html</span>). Only 5 pages, so no concurrency or rate-limiting — but caching first means extraction can be re-run and debugged offline without re-hitting mom.gov.sg.</p>
+        </div></div>
+        <div class="step"><div class="idx"></div><div class="body">
+          <h4>Extract to markdown</h4>
+          <p><code>trafilatura.extract(html, output_format="markdown", include_tables=True, include_comments=False, favor_precision=False)</code> — strips nav/footer/boilerplate but keeps tables inline, correctly positioned relative to their surrounding headings. <code>favor_precision=False</code> is deliberate: trafilatura's precision mode trims aggressively and risks cutting real MOM guidance text along with boilerplate; recall matters more here than a slightly noisier extraction.</p>
+        </div></div>
+        <div class="step"><div class="idx"></div><div class="body">
+          <h4>Assemble the record</h4>
+          <p><code>build_document</code> pulls title/metadata via <code>trafilatura.extract_metadata</code> and stamps a stable <code>document_id</code> (a slugified URL), <code>authority="MOM"</code>, the per-source <code>category</code>, the constant <code>content_type="official_guidance"</code>, and <code>language="en"</code> — the corpus itself is monolingual English; multilinguality lives entirely on the query side (embedding + generation), not in the source documents.</p>
+        </div></div>
+        <div class="step"><div class="idx"></div><div class="body">
+          <h4>Validate before trusting it</h4>
+          <p><span class="fn">validate_documents</span> hard-fails on a missing title, empty text, or text under 500 characters (catches a page reduced to near-nothing after boilerplate stripping) — this is exactly how the WICA and housing pages got caught and dropped, since both extracted down to almost pure navigation. A missing heading structure only <em>warns</em> — a short, heading-less contact page can be legitimate.</p>
+        </div></div>
+      </div>
+
+      <h3>Chunking — structure-aware, five deterministic passes</h3>
+      <p>Pure text transformation, no I/O or model loading, so it's cheap to unit-test in isolation from embedding. Token counting is a heuristic, not a real tokenizer — <code>len(text) // 4</code> — accurate enough to budget chunk sizes without pulling in a tokenizer dependency for a text-splitting step that doesn't need exact counts. Target: 300–500 tokens, 15–20% overlap, tuned against a naive fixed-window baseline across 300/500/800-token and 10%/20%-overlap variants.</p>
+      <div class="steps">
+        <div class="step"><div class="idx"></div><div class="body">
+          <h4>Split on headings — <span class="fn">split_by_headers</span></h4>
+          <p>Regex-matches <code>##</code>/<code>###</code> lines (tolerant of stray leading whitespace some pages picked up from trafilatura extraction) and walks them with a level-aware stack, so each section keeps a full breadcrumb like <em>"Overtime pay &gt; How overtime pay is calculated"</em>, not just its immediate heading.</p>
+        </div></div>
+        <div class="step"><div class="idx"></div><div class="body">
+          <h4>Merge undersized sections — <span class="fn">merge_sections</span></h4>
+          <p>Heading-splitting alone leaves plenty of sections far smaller than the 300-token floor. Adjacent sections are merged forward, greedily, until adding the next one would exceed <code>chunk_size</code> — trading a few merged/less-precise heading paths for chunks that are actually retrieval-sized.</p>
+        </div></div>
+        <div class="step"><div class="idx"></div><div class="body">
+          <h4>Protect tables, then split oversized sections — <span class="fn">split_oversized</span></h4>
+          <p>Any section still over budget is recursively split at paragraph boundaries with overlap (<span class="fn">pack_blocks</span>: greedy bin-packing, carrying the trailing ~15–20% of blocks forward into the next chunk for continuity). Before that split runs, every markdown table block is swapped out for a placeholder token (<span class="fn">protect_tables</span>) so the paragraph splitter can never land inside one — the placeholder is restored after packing, so a table only ever counts against its chunk's token budget as a single atomic block, even if that pushes the chunk over the nominal size cap.</p>
+        </div></div>
+        <div class="step"><div class="idx"></div><div class="body">
+          <h4>Prefix a breadcrumb — <span class="fn">add_breadcrumb</span></h4>
+          <p>Every chunk's text is prefixed with <code>"{document title} &gt; {heading path}"</code> before embedding. A chunk retrieved on its own — with no surrounding page context — still carries enough of the document structure to be understood and correctly attributed.</p>
+        </div></div>
+        <div class="step"><div class="idx"></div><div class="body">
+          <h4>Validate the invariant — <span class="fn">validate_chunks</span></h4>
+          <p>A correctness guard, not a stylistic check: counts table blocks in the source document and sums table blocks across that document's resulting chunks — if they don't match, a table was split, and the run raises rather than silently shipping a broken chunk.</p>
+        </div></div>
+      </div>
+      <p>Each chunk keeps <code>chunk_id</code>, <code>document_id</code>, <code>url</code>, <code>heading_path</code>, and <code>token_count</code> alongside the text — enough to trace any retrieved chunk back to its exact source section for citation.</p>
+
+      <h3>Embedding — BGE-M3 <span class="pill pill-settled">settled</span></h3>
+      <p><code>BAAI/bge-m3</code>, 1024-dim, multilingual. Chosen specifically so queries in Tamil, Burmese, Thai etc. retrieve directly against the English-source corpus with no pre-retrieval translation step. Compared against a 384-dim <code>paraphrase-multilingual-MiniLM-L12-v2</code> variant (its own Chroma collection — dimensions aren't shareable) as the lighter-weight alternative.</p>
+
+      <h3>Retrieval — hybrid BM25 + dense, then rerank <span class="pill pill-settled">settled</span></h3>
+      <p>Chroma indexes BGE-M3 dense vectors; BM25 runs lexical scoring in parallel; results are combined (hybrid) and passed through a reranker. Five retrieval strategies were run head-to-head on a 10-query labeled set (7 non-English, 16-chunk corpus, k=3) — see results below. The winner: hybrid retrieval reranked with SEA-LION-E5, not dense alone and not hybrid unreranked.</p>
+      <p><b>Open question, not yet resolved:</b> BM25's lexical overlap mostly disappears for non-English queries against an English corpus (aside from proper nouns like "S Pass" or dollar figures) — worth splitting hybrid-vs-dense-only by query language rather than assuming BM25 helps uniformly across all of them.</p>
+      <p><b>Deferred, not built:</b> query rewriting + dual retrieval (retrieve on both the original and an English-translated query, then merge) as a targeted fix for that BM25 weakness — parked until real user query examples exist to confirm it's an actual problem, not a speculative one.</p>
+
+      <h3>Generation — SEA-LION 8B <span class="pill pill-settled">settled</span></h3>
+      <p><code>aisingapore/Llama-SEA-LION-v3-8B-IT</code>, chosen over <code>qwen3:8b</code> at the same parameter class specifically to isolate language specialization from model size. Generates directly in the query's language — confirmed by a 10-query smoke test (7 non-English) with no "answer in the query's language" instruction in the system prompt; it answered natively every time anyway.</p>
+
+      <h3>Conversation memory — LangGraph <span class="pill pill-live">live</span></h3>
+      <p>Multi-turn state lives server-side, keyed by <code>thread_id</code> — the frontend only ever sends <code>{message, thread_id}</code>, never full history. A compiled <code>StateGraph</code> runs four nodes per turn:</p>
+      <ul>
+        <li><b>summarize</b> — no-op until conversation length crosses a threshold, then condenses older turns instead of growing the prompt unboundedly.</li>
+        <li><b>rewrite_query</b> — folds history + the latest message into a standalone retrieval query. A bare follow-up like "what about for daily-rated workers?" has almost no signal for the retriever on its own.</li>
+        <li><b>retrieve</b> — the same hybrid + SEA-LION-E5 rerank path above, optionally hitting a Redis-backed retrieval cache first.</li>
+        <li><b>generate</b> — the graph is compiled with <code>interrupt_before=["generate"]</code>: the graph pauses right before this node so <code>/chat</code> can stream the answer token-by-token from outside the graph, then write the finished text back in and resume to <code>END</code>. A deliberate two-phase invoke — not a single blocking call — purely to make streaming and checkpointing compatible.</li>
+      </ul>
+      <p>Checkpointer backend is env-switchable: <code>memory</code> (LangGraph's in-memory saver, default, lost on restart) or <code>redis</code> (thread_id-keyed, TTL-expiring). The Redis branch is written and wired but not yet verified against a live instance — flagged as the most likely spot for an API-shape mismatch once Memurai is actually running locally.</p>
+    </section>
+
+    <section id="eval">
+      <div class="section-head"><span class="n">04</span></div>
+      <h2>Evaluation &amp; results</h2>
+      <p>Every retrieval or prompt change that graduates out of a notebook carries a <a href="#" onclick="return false">Ragas</a> run showing it didn't regress. Retrieval is scored on precision/recall/MRR against a labeled (query, relevant-doc) set; generation on faithfulness (groundedness to retrieved context) and answer relevancy, judged by <code>llama3.1:8b</code>.</p>
+
+      <h3>Metric glossary — what each one measures, how it's computed</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th style="white-space:normal">Metric</th><th style="white-space:normal">What it measures</th><th style="white-space:normal">How it's measured</th></tr></thead>
+          <tbody>
+            <tr><td><b>Hit@3</b></td><td style="white-space:normal">Whether the one correct chunk shows up <em>anywhere</em> in the top 3 results — a pure yes/no on retrieval reach.</td><td style="white-space:normal">1 if <code>correct_chunk_id</code> ∈ top-3 ranked IDs, else 0; averaged over all 10 queries.</td></tr>
+            <tr><td><b>Precision@3</b></td><td style="white-space:normal">What fraction of the top-3 slots were actually relevant — in principle, how "wasteful" the top-k is.</td><td style="white-space:normal"><code>(# relevant in top-3) / 3</code>. With exactly 1 relevant chunk per query here, this collapses to <code>hit@3 / 3</code> — capped at 0.333 even under perfect retrieval, see note above.</td></tr>
+            <tr><td><b>Recall@3</b></td><td style="white-space:normal">What fraction of <em>all</em> relevant chunks for the query were retrieved in the top 3.</td><td style="white-space:normal"><code>(# relevant in top-3) / (total relevant)</code>. Total relevant = 1 here, so this is identical to hit@3 in every row — not an independent signal in this eval design.</td></tr>
+            <tr><td><b>MRR</b></td><td style="white-space:normal">How near the <em>top</em> (not just "in top-3") the correct chunk lands — rewards rank 1 much more than rank 3.</td><td style="white-space:normal"><code>1 / rank</code> if found (0 if missed), averaged over all 10 queries. A miss anywhere counts as a hard 0, not a partial credit.</td></tr>
+            <tr><td><b>nDCG@3</b></td><td style="white-space:normal">Same rank-position sensitivity as MRR, but normalized to a 0–1 scale against the best-possible ordering.</td><td style="white-space:normal">Discounted gain <code>1 / log₂(rank + 1)</code> for the correct chunk if within top-3, divided by the ideal DCG (correct chunk at rank 1).</td></tr>
+            <tr><td><b>Latency</b></td><td style="white-space:normal">Wall-clock cost of one query's retrieval (embedding + search + fusion + rerank, whichever apply).</td><td style="white-space:normal">Averaged per-query time across the 10-query run, on whatever device the notebook executed on (not pinned to CPU/GPU in the findings).</td></tr>
+            <tr><td><b>Faithfulness</b> <span class="pill pill-live">Ragas</span></td><td style="white-space:normal">Whether the generated answer is actually grounded in the retrieved context — the core anti-hallucination check.</td><td style="white-space:normal">Ragas breaks the answer into individual claims, then asks the judge LLM (<code>llama3.1:8b</code>) to verify each claim against the retrieved chunks; score = fraction of claims that are supported.</td></tr>
+            <tr><td><b>Answer Relevancy</b> <span class="pill pill-live">Ragas</span></td><td style="white-space:normal">Whether the answer actually addresses the question asked — independent of whether it's grounded.</td><td style="white-space:normal">Ragas has the judge LLM generate several plausible questions the answer <em>could</em> be answering, embeds them, and scores cosine similarity back to the original query — a low score means the answer drifted off-topic even if every claim in it was true.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="callout">Faithfulness and Answer Relevancy are deliberately independent axes: an answer can be perfectly grounded but off-topic (high faithfulness, low relevancy), or on-topic but making things up (low faithfulness, high relevancy). Tracking both separately is why the SEA-LION vs qwen3 comparison could isolate a faithfulness-specific win rather than a vaguer "better answers" claim.</p>
+
+      <h3>Reranker comparison — why SEA-LION-E5 won</h3>
+      <p>10 labeled queries (7 non-English), 16-chunk corpus, k=3:</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Strategy</th><th class="num">MRR</th><th class="num">Hit@3</th><th class="num">P@3</th><th class="num">Recall@3</th><th class="num">nDCG@3</th><th class="num">Latency</th></tr></thead>
+          <tbody>
+            <tr><td>BM25 only</td><td class="num worst">0.403</td><td class="num worst">0.600</td><td class="num">0.200</td><td class="num">0.600</td><td class="num worst">0.439</td><td class="num">0.1ms</td></tr>
+            <tr><td>hybrid_rerank + ms-marco-MiniLM</td><td class="num worst">0.425</td><td class="num worst">0.500</td><td class="num">0.167</td><td class="num">0.500</td><td class="num worst">0.426</td><td class="num">267ms</td></tr>
+            <tr><td>hybrid (BM25+dense, no rerank)</td><td class="num">0.783</td><td class="num">0.900</td><td class="num">0.300</td><td class="num">0.900</td><td class="num">0.813</td><td class="num">55ms</td></tr>
+            <tr><td>dense only (BGE-M3)</td><td class="num">0.875</td><td class="num">0.900</td><td class="num">0.300</td><td class="num">0.900</td><td class="num">0.863</td><td class="num">137ms</td></tr>
+            <tr><td>hybrid_rerank + bge-reranker-v2-m3</td><td class="num">0.817</td><td class="num best">1.000</td><td class="num best">0.333</td><td class="num best">1.000</td><td class="num">0.863</td><td class="num">4772ms</td></tr>
+            <tr><td><b>hybrid_rerank + SEA-LION-E5</b></td><td class="num best">0.950</td><td class="num best">1.000</td><td class="num best">0.333</td><td class="num best">1.000</td><td class="num best">0.963</td><td class="num">4872ms</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="callout">Hit@3/recall@3 alone don't separate the top two — <code>bge-reranker-v2-m3</code> ties SEA-LION-E5 at a perfect 1.000 on both. The gap shows up in <b>where</b> the right chunk lands inside the top 3: MRR (0.817 vs 0.950) and nDCG@3 (0.863 vs 0.963) both reward ranking it 1st over 3rd, and SEA-LION-E5 does that more consistently. Latency between the two rerankers is a wash (4772ms vs 4872ms) — the win is rank quality, not speed.</p>
+
+      <h3>Why the numbers land exactly there</h3>
+      <p>The eval set is built with <b>exactly one labeled-relevant chunk per query</b> (each entry has a single <code>correct_chunk_id</code>, asserted unique at build time) — that one design choice pins down most of the arithmetic in the table:</p>
+      <ul>
+        <li><code>recall@3 = hits / len(relevant_ids) = hits / 1</code> — so <b>recall@3 is always identical to hit@3</b>, row for row. There's nothing recall@3 is telling you here that hit@3 isn't; with one relevant item, "found it" and "found all of it" are the same event.</li>
+        <li><code>precision@3 = hits / 3</code>, hits ∈ {0,1} — so precision@3 is always <b>exactly</b> hit@3 ÷ 3: 0.900→0.300, 0.600→0.200, 1.000→0.333. It isn't measuring a distinct quality either; it's a fixed rescaling forced by <code>k=3</code> and a single relevant chunk. With this eval design, precision@3 and recall@3 are redundant with hit@3 — MRR and nDCG@3 are where the real signal is, because they're rank-position-sensitive.</li>
+      </ul>
+      <div class="callout teal">
+        <b>MRR</b> = average of <code>1 / rank_of_correct_chunk</code> (0 if missed entirely) — rewards the correct chunk being <em>first</em>, heavily penalizes it being 2nd or 3rd, and zeroes out a miss.<br/>
+        <b>nDCG@3</b> = discounted-gain of the correct chunk's position (weighted <code>1/log₂(rank+1)</code>), normalized against the best-possible ordering — same rank-sensitivity as MRR, on a 0–1 scale.<br/>
+        <b>Hybrid fusion</b> is Reciprocal Rank Fusion (constant 60) over the top-10 dense and top-10 BM25 candidate lists: <code>score[chunk] += 1/(60 + rank)</code> — every method reranks the same fused candidate pool, not a fresh retrieval.
+      </div>
+
+      <h3>Row by row</h3>
+      <div class="card-grid">
+        <div class="card"><h4>BM25 only — 0.403 MRR, 0.600 hit@3</h4><p>Misses the correct chunk in top-3 on 4 of 10 queries outright — almost all non-English, where lexical term overlap against the English-source corpus barely exists. The 6 it does hit average well below rank 1, dragging MRR down further.</p></div>
+        <div class="card"><h4>hybrid_rerank + ms-marco — 0.425 MRR, worse than no rerank</h4><p>An English-only cross-encoder rescoring a candidate pool that's already 70% non-English queries: it actively <em>demotes</em> correct chunks RRF had already surfaced, because it's scoring surface lexical match it can't compute meaningfully in Tamil/Burmese/Thai/etc. Reranking with the wrong model is worse than not reranking at all.</p></div>
+        <div class="card"><h4>hybrid (no rerank) — 0.783 MRR vs dense's 0.875, same 0.900 hit@3</h4><p>Fusing in a weak BM25 signal doesn't push the correct chunk <em>out</em> of the top 3 (hit@3 unchanged) — it dilutes dense's already-strong ordering <em>within</em> the top 3, bumping the right chunk from 1st to 2nd/3rd often enough to cost 0.09 MRR. BM25's own signal is noisy on non-English queries, so mixing it in adds noise to a top-1 position dense was already getting mostly right.</p></div>
+        <div class="card"><h4>dense only — 0.875 MRR, 0.900 hit@3</h4><p>BGE-M3's multilingual embeddings alone are a strong baseline precisely because they don't depend on lexical overlap at all — 1 of 10 queries still misses the top-3 entirely, which is the ceiling a reranker then has to lift.</p></div>
+        <div class="card"><h4>bge-reranker-v2-m3 / SEA-LION-E5 — both reach 1.000 hit@3</h4><p>Both multilingual rerankers recover dense's one miss, pushing every query's correct chunk into the top 3. SEA-LION-E5's extra edge (0.950 vs 0.817 MRR) is entirely about <em>where inside</em> the top 3 — it lands the correct chunk at rank 1 more consistently, which is exactly the SEA-LION-tuned reranker's job on this SEA-language-heavy query set.</p></div>
+      </div>
+      <div class="callout" style="border-left-color:var(--red)">
+        <b>Two numbers in this table are honestly unexplained</b>, not swept under the rug: hybrid (no rerank) clocks 55ms — faster than dense alone at 137ms — despite <code>hybrid_retrieve</code> literally calling dense retrieval <em>plus</em> BM25 <em>plus</em> RRF fusion, strictly more work. The likely cause is measurement order (dense runs first in the benchmark loop and probably absorbs a one-time model warm-up cost later methods don't pay), but that's an inference, not something the notebook states. Similarly, SEA-LION-E5 is noted as a bi-encoder while bge-reranker-v2-m3 is a true cross-encoder, yet both cost ~4.8s — architecture alone doesn't explain why they're latency-matched while ms-marco-MiniLM (267ms) is ~18× faster than either. Worth saying "I don't know, here's my best guess" on both if asked, rather than inventing a clean story.
+      </div>
+
+      <h3>Generation model comparison — why SEA-LION 8B won</h3>
+      <p>Ragas, judge <code>llama3.1:8b</code>, embeddings BGE-M3, retrieval held constant (hybrid + SEA-LION-E5 rerank) except where noted:</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Run</th><th>Retrieval</th><th>Generation</th><th class="num">n</th><th class="num">Faithfulness</th><th class="num">Ans. Relevancy</th></tr></thead>
+          <tbody>
+            <tr><td>A</td><td>dense only</td><td>qwen3:8b</td><td class="num">10</td><td class="num">0.846</td><td class="num">0.792</td></tr>
+            <tr><td>B</td><td>hybrid + SEA-LION-E5</td><td>qwen3:8b</td><td class="num">10</td><td class="num">0.771</td><td class="num">0.774</td></tr>
+            <tr><td>C</td><td>hybrid + SEA-LION-E5</td><td>qwen3:8b</td><td class="num">8*</td><td class="num">0.794</td><td class="num">0.828</td></tr>
+            <tr><td><b>06b</b></td><td>hybrid + SEA-LION-E5</td><td><b>SEA-LION-v3-8B-IT</b></td><td class="num">8*</td><td class="num best">0.900</td><td class="num">0.813</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="font-size:13px;color:var(--ink-soft)">* Burmese and Thai queries dropped from the 10-query set — see caveat below.</p>
+      <p>Net: SEA-LION generation gives a real faithfulness edge (+0.106 over qwen3:8b on the same 8 queries, every SEA-LION answer scoring ≥0.7 vs two qwen3:8b answers flagged) at a small enough answer-relevancy cost (−0.015) to read as noise on 8 queries — not a statistically robust result, a directional one, but a real edge on the metric that matters most for a compliance-adjacent domain: don't say things that aren't in the source.</p>
+
+      <h3>Why two queries got dropped — the judge, not the model, was the problem</h3>
+      <div class="card-grid">
+        <div class="card"><h4>Burmese: 1.0 → 0.25</h4><p>Run A (qwen3, dense) scored perfect faithfulness; Run B (same model, different retrieval) scored 0.25 on the identical query. Traced to qwen3 generation randomness, not a retrieval regression — the retrieved context was fine in both runs.</p></div>
+        <div class="card"><h4>Thai: 0.0 in every run</h4><p>Scored zero regardless of model or retrieval strategy — a judge limitation. <code>llama3.1:8b</code> struggles to verify Thai-language answers against English-source context, not evidence the answer was actually wrong.</p></div>
+      </div>
+      <p>Both were excluded from the 8-query comparison runs so the generation-model comparison wasn't swamped by judge noise unrelated to what was being tested.</p>
+    </section>
+
+    <section id="other">
+      <div class="section-head"><span class="n">05</span></div>
+      <h2>Speech, TTS &amp; avatar</h2>
+      <p>Two supporting services, each a thin, focused layer — neither trains or hosts a model itself except Whisper, which is local.</p>
+      <h3>speech — real-time transcription</h3>
+      <p>Wraps <code>faster-whisper</code> behind a WebSocket (<code>/transcribe/ws</code>) so audio streams in and partial/final transcripts stream back, rather than a single record-then-upload round trip. Multilingual with auto language detection — no separate language toggle needed in the UI, matching the "no translation stage" philosophy of the RAG pipeline itself. Runs as its own container so the Whisper model cache (mounted as a named volume) isn't tied to the RAG service's lifecycle.</p>
+      <h3>tts — voice &amp; talking avatar</h3>
+      <p>Two independent outbound integrations behind one service:</p>
+      <ul>
+        <li><b>ElevenLabs</b> — text-to-speech for a plain audio readback of the answer.</li>
+        <li><b>LiveAvatar (HeyGen)</b> — <code>/session/start</code> mints a short-lived WebRTC session token server-side (the only step needing the secret API key); the frontend uses that token to open the avatar session and call <code>repeatAudio()</code> directly, client-side, without ever touching the real API key.</li>
+      </ul>
+      <p>The security shape here is worth stating explicitly if asked: secrets never leave the server; the browser only ever holds a short-lived, scoped session token.</p>
+    </section>
+
+    <section id="infra">
+      <div class="section-head"><span class="n">06</span></div>
+      <h2>Infra &amp; serving</h2>
+      <div class="card-grid">
+        <div class="card"><h4>Generation backend — env-switchable</h4><p>Ollama for local dev iteration; vLLM for production (continuous batching / PagedAttention throughput). vLLM now runs with on-the-fly 4-bit bitsandbytes quantization — fits an 8GB-VRAM box where full bf16 didn't.</p></div>
+        <div class="card"><h4>Streaming — SSE, hand-rolled</h4><p><code>/chat</code> returns <code>sources</code> once retrieval finishes, then repeated <code>token</code> events, then <code>done</code>. No new dependency — considered too simple to justify one.</p></div>
+        <div class="card"><h4>Retrieval cache</h4><p>Redis-backed, TTL'd (86 400s in compose), toggled independently of the LangGraph checkpointer backend — you may want caching without persistent conversations, or vice versa.</p></div>
+        <div class="card"><h4>Rate limiting</h4><p>Only <code>/chat</code> is limited, keyed by client host; a denied request 429s before the stream opens, not mid-stream. <code>/health</code> is intentionally exempt and dependency-free, so liveness checks don't flap when Ollama is briefly down.</p></div>
+        <div class="card"><h4>Docker Compose</h4><p><code>docker-compose.vllm.yml</code> is <code>include</code>d from the main compose file — kept separate to iterate on/debug vLLM in isolation, but <code>docker compose up</code> still brings up the full stack in one command.</p></div>
+        <div class="card"><h4>Observability</h4><p>Langfuse wired in for LLM call tracing across the RAG graph's multiple LLM hops (rewrite, generate) — useful for debugging exactly which node produced a bad answer in a multi-turn conversation.</p></div>
+      </div>
+    </section>
+
+    <section id="qa">
+      <div class="section-head"><span class="n">07</span></div>
+      <h2>Likely interview questions</h2>
+      <div class="qa">
+        <div class="q">Why hybrid retrieval if dense-only (0.875 MRR) beat hybrid unreranked (0.783)?</div>
+        <div class="a">Because reranking recovers it — hybrid+SEA-LION-E5 (0.950) beats dense alone. The unreranked hybrid number shows BM25 dilutes results on its own; the fix wasn't dropping BM25, it was adding a reranker strong enough to filter what BM25's noise let through.</div>
+      </div>
+      <div class="qa">
+        <div class="q">Why not just always translate to English first?</div>
+        <div class="a">Two reasons tested directly: BGE-M3 retrieves competitively against native-language queries without it, and SEA-LION generates natively in-language off English context without being told to. Adding translation would be an extra LLM hop solving a problem the evals didn't show existed — it's parked as a deferred fix specifically for BM25's non-English weakness, not adopted wholesale.</div>
+      </div>
+      <div class="qa">
+        <div class="q">Why does /chat interrupt the LangGraph graph before generate instead of just calling it?</div>
+        <div class="a">Streaming and LangGraph checkpointing don't compose for free — invoking straight through would only yield the graph's final state, not token deltas. Pausing before generate, streaming from outside the graph, then writing the result back in and resuming to END keeps checkpointing (for multi-turn memory) and token-level streaming (for time-to-first-token) both intact, at the cost of every caller — including tests — needing to follow that two-phase pattern instead of one plain invoke().</div>
+      </div>
+      <div class="qa">
+        <div class="q">Is the SEA-LION generation win statistically solid?</div>
+        <div class="a">No, and worth saying so unprompted — it's an 8-query eval set. The Burmese/Thai episode (a qwen3 randomness artifact and a judge-language limitation, respectively) shows how much one query flip can move these averages. The +0.106 faithfulness gap is a real, direction-consistent signal, not proof at scale.</div>
+      </div>
+      <div class="qa">
+        <div class="q">What's still genuinely unverified end-to-end?</div>
+        <div class="a">The Redis-backed LangGraph checkpointer — written against the expected <code>langgraph-checkpoint-redis</code> API shape but never run against a live Redis/Memurai instance, so the TTL parameter shape in particular is flagged as the likely first thing to break.</div>
+      </div>
+    </section>
+
+    <footer>
+      migrantBuddy — internal interview-prep notes, compiled from CLAUDE.md, notebooks/FINDINGS.ipynb, and current <code>src/migrantbuddy/</code> + <code>docker-compose.yml</code> state.
+    </footer>
+  </main>
+</div>
