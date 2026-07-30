@@ -60,35 +60,7 @@ Four services the team owns, plus backing stores/model runtimes, plus two
 third-party APIs — every internal hop is plain HTTP/WS on the Docker network's
 service-name DNS; every browser-facing hop goes through a published host port.
 
-```mermaid
-flowchart TB
-    Browser["🌐 Browser<br/>chat UI · mic · LiveAvatar WebRTC peer"]
-
-    subgraph Docker["🐳 docker network — migrantbuddy_default"]
-        Frontend["▲ frontend — Next.js<br/>:3001 → 3000"]
-        RAG["⚙️ rag — FastAPI<br/>POST /chat (SSE) · GET /health<br/>:8010 → 8000"]
-        Speech["🎙️ speech — FastAPI<br/>WS /transcribe/ws<br/>:8002"]
-        TTS["🗣️ tts — FastAPI<br/>/session/start · /speak<br/>:8003"]
-        Chroma[("📚 Chroma<br/>embedded in rag<br/>PersistentClient")]
-        Redis[("🧠 Redis<br/>:6379<br/>checkpointer + cache")]
-        Gen["🤖 Ollama :11434 / vLLM :8001<br/>generation backend"]
-    end
-
-    ElevenLabs["🔊 ElevenLabs API<br/>speech synthesis"]
-    LiveAvatar["🧑‍💼 LiveAvatar / HeyGen API<br/>WebRTC session token"]
-
-    Browser -- "HTTPS + WS<br/>localhost:3001" --> Frontend
-    Frontend -- HTTP --> RAG
-    Frontend -- WS --> Speech
-    Frontend -- HTTP --> TTS
-    RAG --> Chroma
-    RAG --> Redis
-    RAG --> Gen
-    Speech --> Redis
-    TTS -. "HTTPS, server-side only<br/>API key never leaves tts" .-> ElevenLabs
-    TTS -. "HTTPS, mint token" .-> LiveAvatar
-    LiveAvatar -. "WebRTC, direct<br/>bypasses rag/tts" .-> Browser
-```
+![migrantBuddy system architecture](migrantWorkerArch.png)
 
 **Why four separate services instead of one monolith:**
 - `rag` is latency-critical (streams tokens) and CPU/GPU-bound on embedding +
@@ -385,64 +357,6 @@ baked in as Docker build args instead of read from `.env.local` (see
 whole reason vLLM's here — it was previously blocked by a Windows-only Long Path error
 installing natively) — switch back to `ollama` any time by editing that one env var in
 `docker-compose.yml`, no rebuild needed, just `docker compose up -d rag`.
-
-### Pulling prebuilt images from Docker Hub instead of building locally
-
-`rag`, `speech`, `tts`, and `frontend` each have an `image:` tag
-(`monikaramesh/migrantbuddy-*`) alongside their `build:` block in
-`docker-compose.yml`. `docker compose build`/`up` still build locally by default —
-this doesn't change your day-to-day workflow. It just means:
-
-- **Publishing a new version** (after you've built locally and want to share it):
-  ```powershell
-  docker compose push rag speech tts frontend
-  ```
-- **Running elsewhere without building** (e.g. a machine without this repo's full
-  source, or without the ML dependencies' build requirements):
-  ```powershell
-  docker compose pull rag speech tts frontend
-  docker compose up
-  ```
-  `up` won't rebuild if a matching image already exists locally (from the pull), so
-  this skips the build step entirely.
-
-Note the `frontend` image has `NEXT_PUBLIC_API_BASE_URL`/`NEXT_PUBLIC_WHISPER_WS_URL`
-baked in from *this machine's* build (`localhost:8010`/`localhost:8002`) — pulling that
-image onto a different machine only makes sense if it'll also reach the backend at
-those same addresses (e.g. via the same Docker network or port-forwarding setup);
-otherwise it needs rebuilding with different build `args:` for that environment.
-
-### Debugging vLLM in isolation
-
-`vllm`'s config lives in its own `docker-compose.vllm.yml`, included by the main
-`docker-compose.yml` (top-level `include:`) rather than defined inline — it's the one
-service needing repeated iteration (CUDA version pin, `--max-model-len`, GPU memory
-budget), and it doesn't depend on redis/ollama/rag/speech/frontend (only `rag` depends
-on it, not the other way around). This means it can be brought up completely on its
-own, without the rest of the stack:
-
-```powershell
-docker compose -f docker-compose.vllm.yml up
-```
-
-`docker compose up` (no `-f`) still brings up the full stack including `vllm`,
-unchanged — the split is purely for isolating debugging, not a behavior change.
-
-**Small-VRAM GPUs (e.g. 8GB laptop GPUs)**: SEA-LION-8B's ~15GB (bf16) weights don't
-fit on their own, regardless of `--max-model-len`/`gpu_memory_utilization` tuning --
-vLLM's rigid upfront memory reservation is built for datacenter-class GPUs (16GB+). If
-you hit `ValueError: No available memory for the cache blocks`, check
-`nvidia-smi --query-gpu=memory.total --format=csv`; if it's well under ~16GB, the
-full-precision model won't fit. `docker-compose.vllm.yml`'s `command` already works
-around this with on-the-fly 4-bit quantization (`--quantization bitsandbytes
---load-format bitsandbytes`), which shrinks weights to ~5GB -- confirmed working on an
-8GB card (`Model loading took 5.34GB`, full startup, `# cuda blocks: 319`). Tradeoffs:
-bitsandbytes quantization is noted by vLLM itself as "not fully optimized" (slower than
-non-quantized), and it forces the older V0 engine (`--quantization bitsandbytes is not
-supported by the V1 Engine`). If quantized quality/speed isn't good enough,
-`ollama` (already in the stack, serving a quantized GGUF build of the same model) is
-the other fallback path -- switch `rag`'s `MIGRANTBUDDY_GENERATION_BACKEND` to
-`ollama`.
 
 ## How the RAG pipeline works
 
