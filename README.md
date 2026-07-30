@@ -60,27 +60,34 @@ Four services the team owns, plus backing stores/model runtimes, plus two
 third-party APIs — every internal hop is plain HTTP/WS on the Docker network's
 service-name DNS; every browser-facing hop goes through a published host port.
 
-```
-Browser (chat UI, mic, LiveAvatar WebRTC peer)
-   │  HTTPS + WS → localhost:3001
-   ▼
-frontend (Next.js)                         :3001 → 3000
-   │
-   ├─ HTTP  POST /chat (SSE), GET /health ─▶ rag       :8010 → 8000
-   ├─ WS    /transcribe/ws ────────────────▶ speech    :8002
-   └─ HTTP  /session/start, /speak ────────▶ tts       :8003
-                                                  │
-                        ┌─────────────────────────┼─────────────────────┐
-                        ▼                          ▼                     ▼
-              Chroma (embedded in rag)    Redis  :6379          Ollama :11434 / vLLM :8001
-              PersistentClient,           checkpointer +        generation backend,
-              ./data/processed volume     retrieval cache       env-switchable
+```mermaid
+flowchart TB
+    Browser["🌐 Browser<br/>chat UI · mic · LiveAvatar WebRTC peer"]
 
-tts also calls out, server-side only (API keys never reach the browser):
-  → ElevenLabs API (speech synthesis)
-  → LiveAvatar/HeyGen API (mints a short-lived WebRTC session token; the browser
-    then opens its own WebRTC session straight to HeyGen's edge — that leg bypasses
-    rag/tts entirely)
+    subgraph Docker["🐳 docker network — migrantbuddy_default"]
+        Frontend["▲ frontend — Next.js<br/>:3001 → 3000"]
+        RAG["⚙️ rag — FastAPI<br/>POST /chat (SSE) · GET /health<br/>:8010 → 8000"]
+        Speech["🎙️ speech — FastAPI<br/>WS /transcribe/ws<br/>:8002"]
+        TTS["🗣️ tts — FastAPI<br/>/session/start · /speak<br/>:8003"]
+        Chroma[("📚 Chroma<br/>embedded in rag<br/>PersistentClient")]
+        Redis[("🧠 Redis<br/>:6379<br/>checkpointer + cache")]
+        Gen["🤖 Ollama :11434 / vLLM :8001<br/>generation backend"]
+    end
+
+    ElevenLabs["🔊 ElevenLabs API<br/>speech synthesis"]
+    LiveAvatar["🧑‍💼 LiveAvatar / HeyGen API<br/>WebRTC session token"]
+
+    Browser -- "HTTPS + WS<br/>localhost:3001" --> Frontend
+    Frontend -- HTTP --> RAG
+    Frontend -- WS --> Speech
+    Frontend -- HTTP --> TTS
+    RAG --> Chroma
+    RAG --> Redis
+    RAG --> Gen
+    Speech --> Redis
+    TTS -. "HTTPS, server-side only<br/>API key never leaves tts" .-> ElevenLabs
+    TTS -. "HTTPS, mint token" .-> LiveAvatar
+    LiveAvatar -. "WebRTC, direct<br/>bypasses rag/tts" .-> Browser
 ```
 
 **Why four separate services instead of one monolith:**
@@ -107,6 +114,148 @@ tts also calls out, server-side only (API keys never reach the browser):
   package; install it separately (e.g. `winget install ffmpeg` on Windows, or grab a
   build from [ffmpeg.org](https://ffmpeg.org/download.html)) and confirm with
   `ffmpeg -version`.
+
+### Configuration
+
+For local secrets (Langfuse keys) and any config overrides, copy `.env.example` to
+`.env` and fill it in:
+
+```powershell
+copy .env.example .env
+```
+
+`.env` is loaded automatically (see `src/migrantbuddy/config.py`) and is gitignored —
+never commit real keys. In a deployed environment, set real environment variables
+directly instead of using `.env` (env vars always take priority over it anyway).
+
+A few settings are overridable this way (everything else — model names, chunk size,
+etc. — is a fixed architecture decision, not meant to vary by environment):
+
+| Env var | Default | Purpose |
+|---|---|---|
+| `MIGRANTBUDDY_OLLAMA_BASE_URL` | `http://localhost:11434` | Where the backend calls Ollama |
+| `MIGRANTBUDDY_OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the model loaded after a request (avoids a multi-GB reload if the next request comes in after Ollama's 5-min default) |
+| `MIGRANTBUDDY_VLLM_BASE_URL` | `http://localhost:8001` | Where the backend calls vLLM (if `GENERATION_BACKEND=vllm`) |
+| `MIGRANTBUDDY_GENERATION_BACKEND` | `ollama` | `ollama` or `vllm` — which generation server to call |
+| `MIGRANTBUDDY_FRONTEND_ORIGIN` | `http://localhost:3000` | Allowed CORS origin for the API |
+| `MIGRANTBUDDY_CHECKPOINTER_BACKEND` | `memory` | `memory` or `redis` — where conversation state (message history, running summary) is persisted — see below |
+| `MIGRANTBUDDY_REDIS_URL` | `redis://localhost:6379` | Redis connection string (only used when `CHECKPOINTER_BACKEND=redis`) |
+| `MIGRANTBUDDY_CONVERSATION_TTL_SECONDS` | `86400` (24h) | How long an idle conversation survives in Redis before expiring (only used when `CHECKPOINTER_BACKEND=redis`) |
+| `MIGRANTBUDDY_RETRIEVAL_CACHE_ENABLED` | `false` | Cache retrieval results in Redis, keyed by (query, top_k) — see below |
+| `MIGRANTBUDDY_RETRIEVAL_CACHE_TTL_SECONDS` | `604800` (7 days) | How long a cached retrieval result lives (only used when `RETRIEVAL_CACHE_ENABLED=true`) |
+| `MIGRANTBUDDY_RATE_LIMIT_ENABLED` | `false` | Rate-limit `/chat` (Redis) — see below |
+| `MIGRANTBUDDY_RATE_LIMIT_MAX_REQUESTS` | `10` | Max requests per client IP per window (only used when `RATE_LIMIT_ENABLED=true`) |
+| `MIGRANTBUDDY_RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate limit window, in seconds (only used when `RATE_LIMIT_ENABLED=true`) |
+| `MIGRANTBUDDY_WHISPER_MODEL_SIZE` | `small` | Whisper model size for speech-to-text (`tiny`/`base`/`small`/`medium`/`large-v3`, etc.) — see below |
+| `MIGRANTBUDDY_WHISPER_DEVICE` | `cpu` | `cpu` or `cuda` — set to `cuda` if you have an NVIDIA GPU |
+| `MIGRANTBUDDY_WHISPER_COMPUTE_TYPE` | `int8` | faster-whisper quantization — `int8` is fastest on CPU; use `float16` with `cuda` |
+| `MIGRANTBUDDY_WHISPER_RATE_LIMIT_ENABLED` | `false` | Rate-limit the Whisper service's `/transcribe/ws` (Redis) — own toggle/budget, separate from `/chat`'s |
+| `MIGRANTBUDDY_WHISPER_RATE_LIMIT_MAX_REQUESTS` | `10` | Max connections per client IP per window (only used when `WHISPER_RATE_LIMIT_ENABLED=true`) |
+| `MIGRANTBUDDY_WHISPER_RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate limit window, in seconds (only used when `WHISPER_RATE_LIMIT_ENABLED=true`) |
+| `ELEVENLABS_API_KEY` | unset (required) | Your ElevenLabs API key — the TTS service won't work without it |
+| `ELEVENLABS_VOICE_ID` | unset (required) | Which ElevenLabs voice to speak with — see below |
+| `MIGRANTBUDDY_ELEVENLABS_MODEL_ID` | `eleven_multilingual_v2` | ElevenLabs model — multilingual to match this project's target languages |
+| `MIGRANTBUDDY_TTS_RATE_LIMIT_ENABLED` | `false` | Rate-limit the TTS service's `/session/start` and `/speak` (Redis) — own toggle/budget, separate from `/chat`'s and Whisper's (ElevenLabs and LiveAvatar are both metered) |
+| `MIGRANTBUDDY_TTS_RATE_LIMIT_MAX_REQUESTS` | `10` | Max requests per client IP per window (only used when `TTS_RATE_LIMIT_ENABLED=true`) |
+| `MIGRANTBUDDY_TTS_RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate limit window, in seconds (only used when `TTS_RATE_LIMIT_ENABLED=true`) |
+| `LIVEAVATAR_API_KEY` | unset (required) | Your LiveAvatar API key — `/session/start` won't work without it |
+| `LIVEAVATAR_AVATAR_ID` | unset (required) | Which LiveAvatar avatar to render — from your LiveAvatar dashboard |
+| `MIGRANTBUDDY_LIVEAVATAR_API_URL` | `https://api.liveavatar.com` | LiveAvatar API base URL |
+| `MIGRANTBUDDY_LIVEAVATAR_IS_SANDBOX` | `true` | Sandbox mode — test without consuming LiveAvatar credits; turn off for a real end-to-end check |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST` | unset (tracing off) | Enables Langfuse tracing when **all three** are set — see below |
+
+#### Conversational memory backend
+
+Defaults to `memory` — LangGraph's built-in in-memory checkpointer, no external service,
+but conversations are lost on every server restart. Setting `MIGRANTBUDDY_CHECKPOINTER_BACKEND=redis`
+persists conversations across restarts, keyed by `thread_id`, with a TTL so idle
+conversations expire instead of growing Redis forever.
+
+Redis itself needs to be running somewhere first. Official Redis doesn't support Windows
+well; on Windows, [Memurai](https://www.memurai.com/) (free Developer Edition) is a
+Redis-API-compatible server that installs as a normal Windows service — no Docker, no
+WSL2. It listens on `localhost:6379` by default, matching `MIGRANTBUDDY_REDIS_URL`'s
+default.
+
+#### Retrieval caching
+
+Off by default, separate toggle from the checkpointer (you may want one without the
+other). Setting `MIGRANTBUDDY_RETRIEVAL_CACHE_ENABLED=true` caches retrieval results in
+Redis keyed by (query, top_k) — safe with a long TTL since the corpus only changes on a
+deliberate re-ingestion, unlike conversation state. A Redis error or cache miss always
+falls back to computing retrieval fresh, and a stale cache entry (e.g. a chunk_id from
+before a re-ingestion) is detected and discarded rather than crashing — this cache is
+purely a latency optimization, never a correctness requirement.
+
+#### Rate limiting
+
+Off by default. Setting `MIGRANTBUDDY_RATE_LIMIT_ENABLED=true` limits `/chat` (only —
+`/health` is never limited) to `RATE_LIMIT_MAX_REQUESTS` requests per client IP per
+`RATE_LIMIT_WINDOW_SECONDS` (Redis, fixed-window `INCR`+`EXPIRE`), returning `429` once
+exceeded. This exists because Ollama/vLLM can't meaningfully serve concurrent requests
+(generation is CPU/GPU-bound) — an unbounded burst would otherwise just queue up and
+time out ugly instead of failing cleanly. Like the retrieval cache, this fails open: a
+Redis error allows the request through rather than locking everyone out.
+
+#### Speech-to-text
+
+Runs as its own service (`migrantbuddy.speech.main`, port 8002 by default), independent
+of the RAG service — see "Run the backend services" below. The 🎤 button next to the
+chat input opens a WebSocket directly to it (`/transcribe/ws`) and streams audio live as
+you speak (`faster-whisper`, multilingual — no language is pinned, so it auto-detects
+Burmese/Tamil/Thai/Vietnamese/etc.); transcribed text appears in the input box
+incrementally as each spoken segment is confirmed, for you to review and edit rather
+than auto-sent — transcription errors are common, and this app answers
+employment/legal-rights questions, where getting the question right matters.
+`MIGRANTBUDDY_WHISPER_MODEL_SIZE=small` by default, a balance of multilingual accuracy
+against CPU-only inference speed; bump it up if you have a GPU
+(`MIGRANTBUDDY_WHISPER_DEVICE=cuda`) or down if `small` is too slow.
+
+#### Text-to-speech + avatar
+
+Runs as its own service (`migrantbuddy.tts.main`, port 8003 by default), independent
+of the RAG and Whisper services. The avatar itself is rendered by
+[LiveAvatar](https://docs.liveavatar.com) (HeyGen ecosystem), **LITE mode**: LiveAvatar
+streams a real, WebRTC-based, lip-synced avatar video straight to the browser, but does
+no TTS of its own in this mode — we generate the audio ourselves with ElevenLabs and
+feed it in.
+
+Flow: the frontend calls `POST /session/start` once per conversation (lazily, on the
+first message sent — not on page load, since minting a session consumes LiveAvatar
+credits) to get a short-lived session token, then uses
+[`@heygen/liveavatar-web-sdk`](https://github.com/heygen-com/liveavatar-web-sdk)
+client-side to connect and attach the video stream. As the chat answer streams in (see
+below), the frontend buffers tokens into complete sentences and, for each one, calls
+`POST /speak` (ElevenLabs, non-streaming, 24kHz PCM — the rate LiveAvatar's audio
+ingest requires) and passes the resulting audio straight into the session's
+`repeatAudio()`, which LiveAvatar lip-syncs and renders server-side — no local viseme
+analysis on our end. A mute toggle next to the mic button skips voice output entirely,
+since both ElevenLabs and LiveAvatar are metered.
+
+**Requires two separate accounts**: `ELEVENLABS_API_KEY`/`ELEVENLABS_VOICE_ID` (audio
+generation) and `LIVEAVATAR_API_KEY`/`LIVEAVATAR_AVATAR_ID` (avatar rendering) — the
+service will fail on first use without all four.
+`MIGRANTBUDDY_LIVEAVATAR_IS_SANDBOX` defaults to `true` so local dev/testing doesn't
+burn LiveAvatar credits; turn it off for a real end-to-end check.
+
+#### Streaming answers
+
+`/chat` streams the answer back token-by-token (Server-Sent Events: `sources` once
+retrieval completes, then repeated `token` events, then `done`) rather than waiting
+for the full answer — reduces perceived latency since text (and, per above, audio)
+starts appearing well before generation finishes. This is the same event stream the
+TTS sentence-buffering logic in "Text-to-speech + avatar" reads from.
+
+#### Observability (Langfuse)
+
+Tracing is opt-in and off by default. Setting `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`,
+and `LANGFUSE_HOST` (self-hosted or [Langfuse Cloud](https://cloud.langfuse.com)) turns on
+per-stage tracing — each retrieval stage (`dense`, `bm25_search`, `hybrid`, `rerank`) and
+each conversation node (`summarize`, `rewrite_query`, `retrieve`, `generate`) show up as
+timed, nested spans under a top-level trace for `ConversationService.answer()`, viewable
+in the Langfuse UI. Because this app can handle sensitive queries (e.g. workplace
+complaints), think about whether self-hosting Langfuse makes more sense than sending
+query text to a third-party cloud instance.
 
 ## 1. Backend setup
 
@@ -294,219 +443,6 @@ supported by the V1 Engine`). If quantized quality/speed isn't good enough,
 `ollama` (already in the stack, serving a quantized GGUF build of the same model) is
 the other fallback path -- switch `rag`'s `MIGRANTBUDDY_GENERATION_BACKEND` to
 `ollama`.
-
-### vLLM Docker troubleshooting log
-
-Everything below actually happened getting `vllm` working in this stack, in order --
-kept as a reference in case any of it resurfaces (e.g. after a driver update or GPU
-swap). vLLM works end-to-end as of the last entry.
-
-1. **`:latest` image failed to start**:
-   `nvidia-container-cli: requirement error: unsatisfied condition: cuda>=13.0, please
-   update your driver`. Cause: `vllm/vllm-openai:latest` bundles a newer CUDA toolkit
-   than the installed NVIDIA driver supports (`nvidia-smi`'s `CUDA Version:` field is
-   the *maximum* the driver supports, not what's installed -- drivers are
-   backward-compatible with older CUDA toolkits, never forward-compatible with newer
-   ones). Fix: pinned to `vllm/vllm-openai:v0.8.1`, built against CUDA 12.4.0 (checked
-   via that tag's Docker Hub image-layer details), comfortably under a 12.5 driver.
-
-2. **`No available memory for the cache blocks`** (first occurrence): vLLM reserves KV
-   cache sized for the model's max context -- SEA-LION-8B inherits Llama 3's 128K
-   window, so it tried to reserve cache for that, leaving nothing after loading
-   weights. Fix attempt: `--max-model-len 8192` (this app's prompts are a few thousand
-   tokens at most). **Did not fully fix it** -- see next entry.
-
-3. **Same error, still**, even at `--max-model-len 8192`: turned out to be a harder
-   constraint underneath -- `nvidia-smi --query-gpu=memory.total` showed only **8GB**
-   total VRAM, and the model's bf16 weights alone are ~15GB. No `max-model-len` or
-   `gpu_memory_utilization` value fixes this -- the weights alone exceed total VRAM.
-   Fix: on-the-fly 4-bit quantization, `--quantization bitsandbytes --load-format
-   bitsandbytes` (no separately pre-quantized checkpoint needed -- vLLM quantizes the
-   regular checkpoint while loading it). Shrank weights to ~5.3GB, leaving enough of
-   the ~7.2GB budget (90% of 8GB) for a small KV cache. Confirmed working: `Model
-   loading took 5.3422 GB`, full startup, `/v1/chat/completions` serving.
-
-4. **Host port collisions** (not vLLM-specific, but hit at the same time): `rag`'s
-   `8000` and `frontend`'s `3000` collided with unrelated containers already running on
-   this machine (an `iot-modified` project's Prometheus exporter, and Grafana). Fix:
-   remapped to `8010`/`3001` in `docker-compose.yml` (see the port note further up).
-   Diagnosed via `docker ps -a` showing every container on the machine, not just this
-   project's -- the giveaway was a "Not Found" response with IIS-style wording instead
-   of FastAPI's JSON 404 body, meaning something other than `rag` was answering on 8000.
-
-5. **`rag`'s own port mismatch, self-inflicted**: an edit changed `vllm`'s port mapping
-   to `"8001:8000"` (host:container) without updating the `--port 8001` the process
-   itself listens on, and `rag`'s `MIGRANTBUDDY_VLLM_BASE_URL` to `http://vllm:8000` to
-   match -- container-to-container traffic went to container port 8000, but nothing
-   listened there (vLLM was on 8001 internally). Fix: mapping back to `"8001:8001"` and
-   `MIGRANTBUDDY_VLLM_BASE_URL` back to `http://vllm:8001` -- the container-side port in
-   a `hostPort:containerPort` mapping must match what the process actually binds to.
-
-6. **Frontend calling the wrong backend port after a port remap**: after remapping
-   `rag` to `8010`, the browser was still calling `:8000` -- because
-   `NEXT_PUBLIC_API_BASE_URL` is inlined into the JS bundle at Docker **build** time,
-   not read at container runtime. Restarting the `frontend` container without
-   rebuilding just reran the old bundle. Fix: `docker compose build frontend` (not just
-   `up`) after any `NEXT_PUBLIC_*` build-arg change.
-
-7. **Misleading "CORS error" in the browser twice**, for two different real causes:
-   FastAPI/Starlette doesn't add `Access-Control-Allow-Origin` to a response generated
-   by an *unhandled exception* (it's added by `CORSMiddleware`, which sits inside
-   Starlette's own `ServerErrorMiddleware` in the stack -- an exception that escapes to
-   that outer layer never reaches the CORS logic). Both times the browser reported a
-   CORS failure, the actual cause was `rag` throwing `ConnectionError` trying to reach
-   a `vllm` that wasn't actually listening (once from the port mismatch above, once
-   because `vllm`'s engine had crashed from the VRAM issue). Lesson: a browser "CORS
-   error" on a same-origin-configured backend is often masking a backend 500, not an
-   actual CORS misconfiguration -- check `docker compose logs rag` first.
-
-8. **`405 Method Not Allowed` on `/chat`**: turned out to be a `GET /chat` reaching the
-   server (confirmed via `docker compose logs rag`'s Uvicorn access-log line), not a
-   `POST` -- caused by manually opening `http://localhost:8010/chat` in a browser tab
-   to inspect it, which always sends `GET`. Not an app bug; the frontend's actual
-   `fetch(...)` call always correctly uses `POST`.
-
-## Configuration
-
-For local secrets (Langfuse keys) and any config overrides, copy `.env.example` to
-`.env` and fill it in:
-
-```powershell
-copy .env.example .env
-```
-
-`.env` is loaded automatically (see `src/migrantbuddy/config.py`) and is gitignored —
-never commit real keys. In a deployed environment, set real environment variables
-directly instead of using `.env` (env vars always take priority over it anyway).
-
-A few settings are overridable this way (everything else — model names, chunk size,
-etc. — is a fixed architecture decision, not meant to vary by environment):
-
-| Env var | Default | Purpose |
-|---|---|---|
-| `MIGRANTBUDDY_OLLAMA_BASE_URL` | `http://localhost:11434` | Where the backend calls Ollama |
-| `MIGRANTBUDDY_OLLAMA_KEEP_ALIVE` | `30m` | How long Ollama keeps the model loaded after a request (avoids a multi-GB reload if the next request comes in after Ollama's 5-min default) |
-| `MIGRANTBUDDY_VLLM_BASE_URL` | `http://localhost:8001` | Where the backend calls vLLM (if `GENERATION_BACKEND=vllm`) |
-| `MIGRANTBUDDY_GENERATION_BACKEND` | `ollama` | `ollama` or `vllm` — which generation server to call |
-| `MIGRANTBUDDY_FRONTEND_ORIGIN` | `http://localhost:3000` | Allowed CORS origin for the API |
-| `MIGRANTBUDDY_CHECKPOINTER_BACKEND` | `memory` | `memory` or `redis` — where conversation state (message history, running summary) is persisted — see below |
-| `MIGRANTBUDDY_REDIS_URL` | `redis://localhost:6379` | Redis connection string (only used when `CHECKPOINTER_BACKEND=redis`) |
-| `MIGRANTBUDDY_CONVERSATION_TTL_SECONDS` | `86400` (24h) | How long an idle conversation survives in Redis before expiring (only used when `CHECKPOINTER_BACKEND=redis`) |
-| `MIGRANTBUDDY_RETRIEVAL_CACHE_ENABLED` | `false` | Cache retrieval results in Redis, keyed by (query, top_k) — see below |
-| `MIGRANTBUDDY_RETRIEVAL_CACHE_TTL_SECONDS` | `604800` (7 days) | How long a cached retrieval result lives (only used when `RETRIEVAL_CACHE_ENABLED=true`) |
-| `MIGRANTBUDDY_RATE_LIMIT_ENABLED` | `false` | Rate-limit `/chat` (Redis) — see below |
-| `MIGRANTBUDDY_RATE_LIMIT_MAX_REQUESTS` | `10` | Max requests per client IP per window (only used when `RATE_LIMIT_ENABLED=true`) |
-| `MIGRANTBUDDY_RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate limit window, in seconds (only used when `RATE_LIMIT_ENABLED=true`) |
-| `MIGRANTBUDDY_WHISPER_MODEL_SIZE` | `small` | Whisper model size for speech-to-text (`tiny`/`base`/`small`/`medium`/`large-v3`, etc.) — see below |
-| `MIGRANTBUDDY_WHISPER_DEVICE` | `cpu` | `cpu` or `cuda` — set to `cuda` if you have an NVIDIA GPU |
-| `MIGRANTBUDDY_WHISPER_COMPUTE_TYPE` | `int8` | faster-whisper quantization — `int8` is fastest on CPU; use `float16` with `cuda` |
-| `MIGRANTBUDDY_WHISPER_RATE_LIMIT_ENABLED` | `false` | Rate-limit the Whisper service's `/transcribe/ws` (Redis) — own toggle/budget, separate from `/chat`'s |
-| `MIGRANTBUDDY_WHISPER_RATE_LIMIT_MAX_REQUESTS` | `10` | Max connections per client IP per window (only used when `WHISPER_RATE_LIMIT_ENABLED=true`) |
-| `MIGRANTBUDDY_WHISPER_RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate limit window, in seconds (only used when `WHISPER_RATE_LIMIT_ENABLED=true`) |
-| `ELEVENLABS_API_KEY` | unset (required) | Your ElevenLabs API key — the TTS service won't work without it |
-| `ELEVENLABS_VOICE_ID` | unset (required) | Which ElevenLabs voice to speak with — see below |
-| `MIGRANTBUDDY_ELEVENLABS_MODEL_ID` | `eleven_multilingual_v2` | ElevenLabs model — multilingual to match this project's target languages |
-| `MIGRANTBUDDY_TTS_RATE_LIMIT_ENABLED` | `false` | Rate-limit the TTS service's `/session/start` and `/speak` (Redis) — own toggle/budget, separate from `/chat`'s and Whisper's (ElevenLabs and LiveAvatar are both metered) |
-| `MIGRANTBUDDY_TTS_RATE_LIMIT_MAX_REQUESTS` | `10` | Max requests per client IP per window (only used when `TTS_RATE_LIMIT_ENABLED=true`) |
-| `MIGRANTBUDDY_TTS_RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate limit window, in seconds (only used when `TTS_RATE_LIMIT_ENABLED=true`) |
-| `LIVEAVATAR_API_KEY` | unset (required) | Your LiveAvatar API key — `/session/start` won't work without it |
-| `LIVEAVATAR_AVATAR_ID` | unset (required) | Which LiveAvatar avatar to render — from your LiveAvatar dashboard |
-| `MIGRANTBUDDY_LIVEAVATAR_API_URL` | `https://api.liveavatar.com` | LiveAvatar API base URL |
-| `MIGRANTBUDDY_LIVEAVATAR_IS_SANDBOX` | `true` | Sandbox mode — test without consuming LiveAvatar credits; turn off for a real end-to-end check |
-| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST` | unset (tracing off) | Enables Langfuse tracing when **all three** are set — see below |
-
-### Conversational memory backend
-
-Defaults to `memory` — LangGraph's built-in in-memory checkpointer, no external service,
-but conversations are lost on every server restart. Setting `MIGRANTBUDDY_CHECKPOINTER_BACKEND=redis`
-persists conversations across restarts, keyed by `thread_id`, with a TTL so idle
-conversations expire instead of growing Redis forever.
-
-Redis itself needs to be running somewhere first. Official Redis doesn't support Windows
-well; on Windows, [Memurai](https://www.memurai.com/) (free Developer Edition) is a
-Redis-API-compatible server that installs as a normal Windows service — no Docker, no
-WSL2. It listens on `localhost:6379` by default, matching `MIGRANTBUDDY_REDIS_URL`'s
-default.
-
-### Retrieval caching
-
-Off by default, separate toggle from the checkpointer (you may want one without the
-other). Setting `MIGRANTBUDDY_RETRIEVAL_CACHE_ENABLED=true` caches retrieval results in
-Redis keyed by (query, top_k) — safe with a long TTL since the corpus only changes on a
-deliberate re-ingestion, unlike conversation state. A Redis error or cache miss always
-falls back to computing retrieval fresh, and a stale cache entry (e.g. a chunk_id from
-before a re-ingestion) is detected and discarded rather than crashing — this cache is
-purely a latency optimization, never a correctness requirement.
-
-### Rate limiting
-
-Off by default. Setting `MIGRANTBUDDY_RATE_LIMIT_ENABLED=true` limits `/chat` (only —
-`/health` is never limited) to `RATE_LIMIT_MAX_REQUESTS` requests per client IP per
-`RATE_LIMIT_WINDOW_SECONDS` (Redis, fixed-window `INCR`+`EXPIRE`), returning `429` once
-exceeded. This exists because Ollama/vLLM can't meaningfully serve concurrent requests
-(generation is CPU/GPU-bound) — an unbounded burst would otherwise just queue up and
-time out ugly instead of failing cleanly. Like the retrieval cache, this fails open: a
-Redis error allows the request through rather than locking everyone out.
-
-### Speech-to-text
-
-Runs as its own service (`migrantbuddy.speech.main`, port 8002 by default), independent
-of the RAG service — see "Run the backend services" above. The 🎤 button next to the
-chat input opens a WebSocket directly to it (`/transcribe/ws`) and streams audio live as
-you speak (`faster-whisper`, multilingual — no language is pinned, so it auto-detects
-Burmese/Tamil/Thai/Vietnamese/etc.); transcribed text appears in the input box
-incrementally as each spoken segment is confirmed, for you to review and edit rather
-than auto-sent — transcription errors are common, and this app answers
-employment/legal-rights questions, where getting the question right matters.
-`MIGRANTBUDDY_WHISPER_MODEL_SIZE=small` by default, a balance of multilingual accuracy
-against CPU-only inference speed; bump it up if you have a GPU
-(`MIGRANTBUDDY_WHISPER_DEVICE=cuda`) or down if `small` is too slow.
-
-### Text-to-speech + avatar
-
-Runs as its own service (`migrantbuddy.tts.main`, port 8003 by default), independent
-of the RAG and Whisper services. The avatar itself is rendered by
-[LiveAvatar](https://docs.liveavatar.com) (HeyGen ecosystem), **LITE mode**: LiveAvatar
-streams a real, WebRTC-based, lip-synced avatar video straight to the browser, but does
-no TTS of its own in this mode — we generate the audio ourselves with ElevenLabs and
-feed it in.
-
-Flow: the frontend calls `POST /session/start` once per conversation (lazily, on the
-first message sent — not on page load, since minting a session consumes LiveAvatar
-credits) to get a short-lived session token, then uses
-[`@heygen/liveavatar-web-sdk`](https://github.com/heygen-com/liveavatar-web-sdk)
-client-side to connect and attach the video stream. As the chat answer streams in (see
-below), the frontend buffers tokens into complete sentences and, for each one, calls
-`POST /speak` (ElevenLabs, non-streaming, 24kHz PCM — the rate LiveAvatar's audio
-ingest requires) and passes the resulting audio straight into the session's
-`repeatAudio()`, which LiveAvatar lip-syncs and renders server-side — no local viseme
-analysis on our end. A mute toggle next to the mic button skips voice output entirely,
-since both ElevenLabs and LiveAvatar are metered.
-
-**Requires two separate accounts**: `ELEVENLABS_API_KEY`/`ELEVENLABS_VOICE_ID` (audio
-generation) and `LIVEAVATAR_API_KEY`/`LIVEAVATAR_AVATAR_ID` (avatar rendering) — the
-service will fail on first use without all four.
-`MIGRANTBUDDY_LIVEAVATAR_IS_SANDBOX` defaults to `true` so local dev/testing doesn't
-burn LiveAvatar credits; turn it off for a real end-to-end check.
-
-### Streaming answers
-
-`/chat` streams the answer back token-by-token (Server-Sent Events: `sources` once
-retrieval completes, then repeated `token` events, then `done`) rather than waiting
-for the full answer — reduces perceived latency since text (and, per above, audio)
-starts appearing well before generation finishes. This is the same event stream the
-TTS sentence-buffering logic in "Text-to-speech + avatar" reads from.
-
-### Observability (Langfuse)
-
-Tracing is opt-in and off by default. Setting `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`,
-and `LANGFUSE_HOST` (self-hosted or [Langfuse Cloud](https://cloud.langfuse.com)) turns on
-per-stage tracing — each retrieval stage (`dense`, `bm25_search`, `hybrid`, `rerank`) and
-each conversation node (`summarize`, `rewrite_query`, `retrieve`, `generate`) show up as
-timed, nested spans under a top-level trace for `ConversationService.answer()`, viewable
-in the Langfuse UI. Because this app can handle sensitive queries (e.g. workplace
-complaints), think about whether self-hosting Langfuse makes more sense than sending
-query text to a third-party cloud instance.
 
 ## How the RAG pipeline works
 
