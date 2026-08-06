@@ -1,0 +1,237 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 480" font-family="ui-monospace, Consolas, 'SF Mono', 'Roboto Mono', monospace">
+  <title>migrantBuddy RAG pipeline — offline ingestion and online per-turn stages</title>
+  <desc>
+    Offline ingestion (purple, run once per corpus change): fetch and cache raw HTML,
+    extract to markdown, assemble and validate the record, chunk it structure-aware,
+    then embed and index with BGE-M3 into Chroma and BM25. That index feeds retrieval.
+    Online, per conversation turn (blue): a query in any supported language is
+    summarized, the query is rewritten to a standalone retrieval query, hybrid BM25 and
+    dense retrieval runs against the index, results are reranked with SEA-LION-E5, and
+    SEA-LION 8B generates and streams back an answer in the query's language.
+  </desc>
+
+  <defs>
+    <marker id="arrowP" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b4fc0"/>
+    </marker>
+    <marker id="arrowB" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2f6fb0"/>
+    </marker>
+    <marker id="arrowT" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#147d68"/>
+    </marker>
+
+    <!-- icons, viewBox 0 0 24 24 -->
+    <g id="ic-download" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="12" y1="3" x2="12" y2="15"/>
+      <polyline points="7,10 12,15 17,10"/>
+      <line x1="4" y1="20" x2="20" y2="20"/>
+    </g>
+    <g id="ic-file" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 2h9l5 5v15H6z"/>
+      <polyline points="15,2 15,7 20,7"/>
+      <line x1="9" y1="13" x2="17" y2="13"/>
+      <line x1="9" y1="17" x2="17" y2="17"/>
+    </g>
+    <g id="ic-check" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="9"/>
+      <polyline points="8,12 11,15 16,9"/>
+    </g>
+    <g id="ic-grid" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="8" height="8" rx="1"/>
+      <rect x="13" y="3" width="8" height="8" rx="1"/>
+      <rect x="3" y="13" width="8" height="8" rx="1"/>
+      <rect x="13" y="13" width="8" height="8" rx="1"/>
+    </g>
+    <g id="ic-layers" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="12,2 22,8 12,14 2,8"/>
+      <polyline points="2,14 12,20 22,14"/>
+    </g>
+    <g id="ic-compress" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="4" y1="6" x2="20" y2="6"/>
+      <line x1="7" y1="12" x2="17" y2="12"/>
+      <line x1="10" y1="18" x2="14" y2="18"/>
+    </g>
+    <g id="ic-edit" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M3 21l1-4 11-11 3 3-11 11z"/>
+      <line x1="14" y1="6" x2="18" y2="10"/>
+    </g>
+    <g id="ic-search" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="10" cy="10" r="6"/>
+      <line x1="15" y1="15" x2="21" y2="21"/>
+    </g>
+    <g id="ic-sort" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <line x1="7" y1="4" x2="7" y2="20"/>
+      <polyline points="4,7 7,4 10,7"/>
+      <line x1="17" y1="20" x2="17" y2="4"/>
+      <polyline points="14,17 17,20 20,17"/>
+    </g>
+    <g id="ic-chat" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 5h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H10l-5 4v-4H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/>
+    </g>
+    <g id="ic-user" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="8" r="4"/>
+      <path d="M4 21a8 8 0 0 1 16 0"/>
+    </g>
+  </defs>
+
+  <style>
+    :root{
+      --bg:#f4f5f8; --surface:#ffffff; --surface-2:#eceef3; --ink:#1c2333; --ink-muted:#5b6472;
+      --border:#d7dbe3;
+      --purple:#6b4fc0; --purple-fill:#f4f1fd;
+      --blue:#2f6fb0; --blue-fill:#eef5fc;
+      --teal:#147d68; --teal-fill:#e6f5f1;
+    }
+    @media (prefers-color-scheme: dark){
+      :root{
+        --bg:#12151c; --surface:#181c26; --surface-2:#1f2430; --ink:#e8eaf0; --ink-muted:#9aa3b5;
+        --border:#2c3140;
+        --purple:#a68cf0; --purple-fill:#241d3a;
+        --blue:#7ab3ea; --blue-fill:#182534;
+        --teal:#4fc7a8; --teal-fill:#122d26;
+      }
+    }
+    text{fill:var(--ink);}
+    .lane-label{font-size:13px;font-weight:700;letter-spacing:.06em;}
+    .lane-label.purple{fill:var(--purple);}
+    .lane-label.blue{fill:var(--blue);}
+    .lane-rect-purple{fill:var(--purple-fill);stroke:var(--purple);stroke-width:1.6;stroke-dasharray:6 4;}
+    .lane-rect-blue{fill:var(--blue-fill);stroke:var(--blue);stroke-width:1.6;stroke-dasharray:6 4;}
+    .box{fill:var(--surface);stroke-width:1.6;}
+    .box-purple{stroke:var(--purple);}
+    .box-blue{stroke:var(--blue);}
+    .box-title{font-size:12.5px;font-weight:600;text-anchor:middle;}
+    .box-sub{font-size:10px;fill:var(--ink-muted);font-weight:400;text-anchor:middle;}
+    .step{font-size:9.5px;font-weight:700;text-anchor:middle;}
+    .step-purple{fill:var(--purple);}
+    .step-blue{fill:var(--blue);}
+    .cap{fill:var(--teal-fill);stroke:var(--teal);stroke-width:1.6;}
+    .cap-title{font-size:11.5px;font-weight:600;text-anchor:middle;fill:var(--teal);}
+    .cap-sub{font-size:9.5px;text-anchor:middle;fill:var(--ink-muted);}
+    .icon-purple{color:var(--purple);}
+    .icon-blue{color:var(--blue);}
+    .icon-teal{color:var(--teal);}
+    .arrow-p{stroke:var(--purple);stroke-width:2;fill:none;}
+    .arrow-b{stroke:var(--blue);stroke-width:2;fill:none;}
+    .arrow-t{stroke:var(--teal);stroke-width:2;fill:none;}
+    .link-label{font-size:10px;fill:var(--ink-muted);paint-order:stroke;stroke:var(--surface);stroke-width:5px;stroke-linejoin:round;}
+    rect.background{fill:var(--bg);}
+  </style>
+
+  <rect class="background" x="0" y="0" width="1300" height="480"/>
+
+  <!-- ============ OFFLINE INGESTION ============ -->
+  <text x="170" y="42" class="lane-label purple">OFFLINE INGESTION — run once per corpus change</text>
+  <rect x="170" y="50" width="970" height="160" rx="10" class="lane-rect-purple"/>
+
+  <!-- 1 Fetch -->
+  <rect x="190" y="80" width="150" height="110" rx="7" class="box box-purple"/>
+  <use href="#ic-download" class="icon-purple" x="205" y="95" width="20" height="20"/>
+  <text x="265" y="135" class="box-title">Fetch &amp; cache</text>
+  <text x="265" y="152" class="box-sub">raw HTML → disk</text>
+  <text x="205" y="185" class="step step-purple">1</text>
+
+  <!-- 2 Extract -->
+  <rect x="365" y="80" width="150" height="110" rx="7" class="box box-purple"/>
+  <use href="#ic-file" class="icon-purple" x="380" y="95" width="20" height="20"/>
+  <text x="440" y="135" class="box-title">Extract</text>
+  <text x="440" y="152" class="box-sub">trafilatura →</text>
+  <text x="440" y="165" class="box-sub">markdown</text>
+  <text x="380" y="185" class="step step-purple">2</text>
+
+  <!-- 3 Assemble & validate -->
+  <rect x="540" y="80" width="150" height="110" rx="7" class="box box-purple"/>
+  <use href="#ic-check" class="icon-purple" x="555" y="95" width="20" height="20"/>
+  <text x="615" y="135" class="box-title">Assemble &amp;</text>
+  <text x="615" y="150" class="box-title">validate</text>
+  <text x="615" y="167" class="box-sub">category, content_type</text>
+  <text x="555" y="185" class="step step-purple">3</text>
+
+  <!-- 4 Chunk -->
+  <rect x="715" y="80" width="150" height="110" rx="7" class="box box-purple"/>
+  <use href="#ic-grid" class="icon-purple" x="730" y="95" width="20" height="20"/>
+  <text x="790" y="135" class="box-title">Chunk</text>
+  <text x="790" y="152" class="box-sub">structure-aware</text>
+  <text x="790" y="165" class="box-sub">300-500 tok</text>
+  <text x="730" y="185" class="step step-purple">4</text>
+
+  <!-- 5 Embed & index -->
+  <rect x="890" y="80" width="150" height="110" rx="7" class="box box-purple"/>
+  <use href="#ic-layers" class="icon-purple" x="905" y="95" width="20" height="20"/>
+  <text x="965" y="135" class="box-title">Embed &amp; index</text>
+  <text x="965" y="152" class="box-sub">BGE-M3</text>
+  <text x="965" y="165" class="box-sub">Chroma + BM25</text>
+  <text x="905" y="185" class="step step-purple">5</text>
+
+  <line x1="340" y1="135" x2="363" y2="135" class="arrow-p" marker-end="url(#arrowP)"/>
+  <line x1="515" y1="135" x2="538" y2="135" class="arrow-p" marker-end="url(#arrowP)"/>
+  <line x1="690" y1="135" x2="713" y2="135" class="arrow-p" marker-end="url(#arrowP)"/>
+  <line x1="865" y1="135" x2="888" y2="135" class="arrow-p" marker-end="url(#arrowP)"/>
+
+  <!-- ============ ONLINE PER TURN ============ -->
+  <text x="170" y="270" class="lane-label blue">ONLINE — per conversation turn</text>
+  <rect x="170" y="278" width="970" height="160" rx="10" class="lane-rect-blue"/>
+
+  <!-- 1 Summarize -->
+  <rect x="190" y="308" width="150" height="110" rx="7" class="box box-blue"/>
+  <use href="#ic-compress" class="icon-blue" x="205" y="323" width="20" height="20"/>
+  <text x="265" y="363" class="box-title">Summarize</text>
+  <text x="265" y="380" class="box-sub">condense once</text>
+  <text x="265" y="393" class="box-sub">threshold hit</text>
+  <text x="205" y="413" class="step step-blue">1</text>
+
+  <!-- 2 Rewrite query -->
+  <rect x="365" y="308" width="150" height="110" rx="7" class="box box-blue"/>
+  <use href="#ic-edit" class="icon-blue" x="380" y="323" width="20" height="20"/>
+  <text x="440" y="363" class="box-title">Rewrite query</text>
+  <text x="440" y="380" class="box-sub">history → standalone</text>
+  <text x="440" y="393" class="box-sub">retrieval query</text>
+  <text x="380" y="413" class="step step-blue">2</text>
+
+  <!-- 3 Retrieve -->
+  <rect x="540" y="308" width="150" height="110" rx="7" class="box box-blue"/>
+  <use href="#ic-search" class="icon-blue" x="555" y="323" width="20" height="20"/>
+  <text x="615" y="363" class="box-title">Retrieve</text>
+  <text x="615" y="380" class="box-sub">hybrid BM25</text>
+  <text x="615" y="393" class="box-sub">+ dense</text>
+  <text x="555" y="413" class="step step-blue">3</text>
+
+  <!-- 4 Rerank -->
+  <rect x="715" y="308" width="150" height="110" rx="7" class="box box-blue"/>
+  <use href="#ic-sort" class="icon-blue" x="730" y="323" width="20" height="20"/>
+  <text x="790" y="363" class="box-title">Rerank</text>
+  <text x="790" y="380" class="box-sub">SEA-LION-E5</text>
+  <text x="730" y="413" class="step step-blue">4</text>
+
+  <!-- 5 Generate -->
+  <rect x="890" y="308" width="150" height="110" rx="7" class="box box-blue"/>
+  <use href="#ic-chat" class="icon-blue" x="905" y="323" width="20" height="20"/>
+  <text x="965" y="363" class="box-title">Generate</text>
+  <text x="965" y="380" class="box-sub">SEA-LION 8B</text>
+  <text x="965" y="393" class="box-sub">streamed (SSE)</text>
+  <text x="905" y="413" class="step step-blue">5</text>
+
+  <line x1="340" y1="363" x2="363" y2="363" class="arrow-b" marker-end="url(#arrowB)"/>
+  <line x1="515" y1="363" x2="538" y2="363" class="arrow-b" marker-end="url(#arrowB)"/>
+  <line x1="690" y1="363" x2="713" y2="363" class="arrow-b" marker-end="url(#arrowB)"/>
+  <line x1="865" y1="363" x2="888" y2="363" class="arrow-b" marker-end="url(#arrowB)"/>
+
+  <!-- ============ QUERY IN / ANSWER OUT ============ -->
+  <rect x="20" y="338" width="140" height="50" rx="25" class="cap"/>
+  <use href="#ic-user" class="icon-teal" x="34" y="352" width="18" height="18"/>
+  <text x="98" y="360" class="cap-title">Query</text>
+  <text x="98" y="376" class="cap-sub">any supported language</text>
+  <line x1="160" y1="363" x2="188" y2="363" class="arrow-t" marker-end="url(#arrowT)"/>
+
+  <line x1="1040" y1="363" x2="1148" y2="363" class="arrow-t" marker-end="url(#arrowT)"/>
+  <rect x="1150" y="338" width="140" height="50" rx="25" class="cap"/>
+  <use href="#ic-chat" class="icon-teal" x="1164" y="352" width="18" height="18"/>
+  <text x="1228" y="360" class="cap-title">Answer</text>
+  <text x="1228" y="376" class="cap-sub">same language</text>
+
+  <!-- index feeds retrieval -->
+  <path d="M 965 190 L 965 235 L 615 235 L 615 306" class="arrow-p" stroke-dasharray="5 4" marker-end="url(#arrowP)"/>
+  <text x="800" y="230" class="link-label">index feeds retrieval</text>
+
+</svg>

@@ -315,29 +315,7 @@ One request flows through offline ingestion (notebook-driven, run once per corpu
 change) and five online stages per turn: summarize → rewrite query → retrieve →
 rerank → generate.
 
-```mermaid
-flowchart LR
-    subgraph OFF["Offline ingestion (notebook-driven, run once per corpus change)"]
-        direction LR
-        A[Fetch & cache raw HTML] --> B[Extract to markdown]
-        B --> C[Assemble & validate record]
-        C --> D[Chunk<br/>structure-aware, 300-500 tok]
-        D --> E[Embed & index<br/>BGE-M3 + Chroma + BM25]
-    end
-
-    Q([Query, any supported language]) --> S
-
-    subgraph ON["Online, per conversation turn"]
-        direction LR
-        S[1. Summarize] --> RW[2. Rewrite query]
-        RW --> RT[3. Retrieve<br/>hybrid BM25 + dense]
-        RT --> RR[4. Rerank<br/>SEA-LION-E5]
-        RR --> GEN[5. Generate<br/>SEA-LION 8B, streamed]
-    end
-
-    E -.index feeds.-> RT
-    GEN --> OUT([Answer streamed back<br/>in the query's language])
-```
+![migrantBuddy RAG pipeline, offline ingestion and online per-turn stages, with icons](ragPipeline.svg)
 
 <a id="ingestion--fetch-extract-validate"></a>
 ### Ingestion, fetch, extract, validate
