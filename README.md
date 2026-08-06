@@ -26,7 +26,6 @@ MOM documents, in whatever language the question was asked in.
 - [Evaluation results](#evaluation-results)
   - [Reranker comparison](#reranker-comparison)
   - [Generation model comparison](#generation-model-comparison)
-- [Project status](#project-status)
 - [Architectural decisions](#architectural-decisions)
   - [Conversational memory backend](#conversational-memory-backend)
   - [Retrieval caching](#retrieval-caching)
@@ -479,7 +478,7 @@ SEA-LION-E5 rerank) except where noted:
 | A | dense only | qwen3:8b | 10 | 0.846 | 0.792 |
 | B | hybrid + SEA-LION-E5 | qwen3:8b | 10 | 0.771 | 0.774 |
 | C | hybrid + SEA-LION-E5 | qwen3:8b | 8* | 0.794 | 0.828 |
-| **06b** | hybrid + SEA-LION-E5 | **SEA-LION-v3-8B-IT** | 8* | **0.900** | 0.813 |
+| **D** | hybrid + SEA-LION-E5 | **SEA-LION-v3-8B-IT** | 8* | **0.900** | 0.813 |
 
 \* Burmese and Thai queries dropped from the 10-query set — Burmese scored 1.0 in
 Run A vs 0.25 in Run B on the *identical* query (traced to qwen3 generation
@@ -495,16 +494,6 @@ at a small enough answer-relevancy cost (−0.015) to read as noise on 8 queries
 directional result, not a statistically robust one, but a real edge on the metric
 that matters most for a compliance-adjacent domain: don't say things that aren't in
 the source.
-
-<a id="project-status"></a>
-## Project status
-
-Core pipeline choices (BGE-M3 embedding, hybrid BM25+dense retrieval, SEA-LION-E5
-reranker, SEA-LION 8B generation) are settled and extracted into
-`src/migrantbuddy/`. The full stack — RAG, speech-to-text, TTS/avatar, frontend,
-LangGraph conversation memory, and Docker Compose orchestration — is built and
-running; the Redis-backed checkpointer is written but not yet verified against a
-live instance, and CI/CD/production deploy haven't been set up yet.
 
 <a id="architectural-decisions"></a>
 ## Architectural decisions
