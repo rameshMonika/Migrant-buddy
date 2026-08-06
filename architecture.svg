@@ -1,0 +1,278 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 950" font-family="ui-monospace, Consolas, 'SF Mono', 'Roboto Mono', monospace">
+  <title>migrantBuddy distributed service architecture — dev vs production</title>
+  <desc>
+    Two-lane diagram. Dev lane (light, dashed): browser talks to a local Next.js frontend,
+    which calls rag, speech, and tts as local uvicorn processes; rag's generate node calls
+    Ollama; state lives in process memory. Production lane (bold, solid): browser talks to a
+    containerized frontend, which calls containerized rag, speech, and tts; rag's generate
+    node calls vLLM on GPU; rag's retrieval cache and rate limiting write to a Redis
+    container. Both lanes' tts service calls the same external ElevenLabs and LiveAvatar APIs.
+  </desc>
+
+  <defs>
+    <marker id="arrowDev" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#5b6b82"/>
+    </marker>
+    <marker id="arrowProd" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#c2410c"/>
+    </marker>
+    <marker id="arrowNeutral" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8b93a3"/>
+    </marker>
+
+    <!-- Icon glyphs, viewBox 0 0 24 24, stroke-based line icons -->
+    <g id="ic-browser" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2" y="4" width="20" height="16" rx="2"/>
+      <line x1="2" y1="9" x2="22" y2="9"/>
+      <circle cx="6" cy="6.5" r="0.6" fill="currentColor"/>
+      <circle cx="9" cy="6.5" r="0.6" fill="currentColor"/>
+    </g>
+    <g id="ic-window" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <polyline points="8,7 3,12 8,17"/>
+      <polyline points="16,7 21,12 16,17"/>
+    </g>
+    <g id="ic-chat" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 5h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H10l-5 4v-4H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z"/>
+    </g>
+    <g id="ic-mic" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="9" y="2" width="6" height="12" rx="3"/>
+      <path d="M5 11a7 7 0 0 0 14 0"/>
+      <line x1="12" y1="18" x2="12" y2="22"/>
+      <line x1="8" y1="22" x2="16" y2="22"/>
+    </g>
+    <g id="ic-speaker" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="3,9 8,9 13,4 13,20 8,15 3,15"/>
+      <path d="M17 8a6 6 0 0 1 0 8"/>
+      <path d="M20 5a10 10 0 0 1 0 14"/>
+    </g>
+    <g id="ic-terminal" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2" y="4" width="20" height="16" rx="2"/>
+      <polyline points="6,9 10,12 6,15"/>
+      <line x1="12" y1="15" x2="18" y2="15"/>
+    </g>
+    <g id="ic-chip" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="6" y="6" width="12" height="12" rx="1"/>
+      <line x1="9" y1="2" x2="9" y2="6"/><line x1="15" y1="2" x2="15" y2="6"/>
+      <line x1="9" y1="18" x2="9" y2="22"/><line x1="15" y1="18" x2="15" y2="22"/>
+      <line x1="2" y1="9" x2="6" y2="9"/><line x1="2" y1="15" x2="6" y2="15"/>
+      <line x1="18" y1="9" x2="22" y2="9"/><line x1="18" y1="15" x2="22" y2="15"/>
+    </g>
+    <g id="ic-db" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <ellipse cx="12" cy="5" rx="8" ry="3"/>
+      <path d="M4 5v14a8 3 0 0 0 16 0V5"/>
+      <path d="M4 12a8 3 0 0 0 16 0"/>
+    </g>
+    <g id="ic-memory" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="7" width="18" height="10" rx="1.5"/>
+      <line x1="7" y1="7" x2="7" y2="3"/><line x1="12" y1="7" x2="12" y2="3"/><line x1="17" y1="7" x2="17" y2="3"/>
+      <line x1="7" y1="21" x2="7" y2="17"/><line x1="12" y1="21" x2="12" y2="17"/><line x1="17" y1="21" x2="17" y2="17"/>
+    </g>
+    <g id="ic-cloud" stroke="currentColor" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M7 18a4 4 0 0 1-1-7.9 5 5 0 0 1 9.6-2A4.5 4.5 0 0 1 18 18H7z"/>
+    </g>
+  </defs>
+
+  <style>
+    :root{
+      --bg:#f4f5f8; --surface:#ffffff; --surface-2:#eceef3; --ink:#1c2333; --ink-muted:#5b6472;
+      --border:#d7dbe3; --accent-prod:#c2410c; --accent-prod-fill:#fdece1;
+      --accent-dev:#5b6b82; --accent-dev-fill:#eef1f6; --accent-neutral:#8b93a3;
+    }
+    @media (prefers-color-scheme: dark){
+      :root{
+        --bg:#12151c; --surface:#181c26; --surface-2:#1f2430; --ink:#e8eaf0; --ink-muted:#9aa3b5;
+        --border:#2c3140; --accent-prod:#f0793b; --accent-prod-fill:#3a2318;
+        --accent-dev:#93a0b5; --accent-dev-fill:#20242f; --accent-neutral:#7b8494;
+      }
+    }
+    text{fill:var(--ink);}
+    .lane-label{font-size:13px;font-weight:700;letter-spacing:.06em;}
+    .lane-label.dev{fill:var(--accent-dev);}
+    .lane-label.prod{fill:var(--accent-prod);}
+    .box{fill:var(--surface);stroke:var(--border);stroke-width:1.4;}
+    .box-title{font-size:12.5px;font-weight:600;}
+    .box-sub{font-size:10.5px;fill:var(--ink-muted);font-weight:400;}
+    .mini{fill:var(--surface-2);stroke-width:1.2;}
+    .mini-dev{stroke:var(--accent-dev);}
+    .mini-prod{stroke:var(--accent-prod);}
+    .mini-label{font-size:10px;font-weight:600;text-anchor:middle;}
+    .anno{font-size:9.5px;fill:var(--ink-muted);}
+    .line-dev{stroke:var(--accent-dev);stroke-width:1.6;stroke-dasharray:5 3;fill:none;}
+    .line-prod{stroke:var(--accent-prod);stroke-width:2.6;fill:none;}
+    .line-neutral{stroke:var(--accent-neutral);stroke-width:1.3;stroke-dasharray:3 3;fill:none;}
+    .lane-rect-dev{fill:var(--accent-dev-fill);stroke:var(--accent-dev);stroke-width:1.4;stroke-dasharray:6 4;}
+    .lane-rect-prod{fill:var(--accent-prod-fill);stroke:var(--accent-prod);stroke-width:2.4;}
+    .ext-rect{fill:var(--surface-2);stroke:var(--accent-neutral);stroke-width:1.3;stroke-dasharray:4 3;}
+    .arrow-label{font-size:10px;font-weight:600;fill:var(--ink-muted);paint-order:stroke;stroke:var(--surface);stroke-width:5px;stroke-linejoin:round;}
+    .icon-dev{color:var(--accent-dev);}
+    .icon-prod{color:var(--accent-prod);}
+    .icon-neutral{color:var(--accent-neutral);}
+    rect.background{fill:var(--bg);}
+  </style>
+
+  <rect class="background" x="0" y="0" width="1300" height="950"/>
+
+  <!-- ============ DEV LANE ============ -->
+  <text x="20" y="42" class="lane-label dev">DEV — LOCAL, NON-DOCKER</text>
+  <rect x="20" y="50" width="1060" height="300" rx="8" class="lane-rect-dev"/>
+
+  <!-- Browser -->
+  <rect x="50" y="160" width="120" height="50" rx="5" class="box"/>
+  <use href="#ic-browser" class="icon-dev" x="60" y="170" width="16" height="16"/>
+  <text x="118" y="181" text-anchor="middle" class="box-title">Browser</text>
+  <text x="110" y="196" text-anchor="middle" class="box-sub">localhost:3000</text>
+
+  <!-- Frontend -->
+  <rect x="250" y="160" width="140" height="50" rx="5" class="box"/>
+  <use href="#ic-window" class="icon-dev" x="260" y="170" width="16" height="16"/>
+  <text x="328" y="181" text-anchor="middle" class="box-title">frontend</text>
+  <text x="320" y="196" text-anchor="middle" class="box-sub">npm run dev</text>
+
+  <!-- rag -->
+  <rect x="470" y="90" width="430" height="180" rx="6" class="box"/>
+  <use href="#ic-chat" class="icon-dev" x="486" y="100" width="17" height="17"/>
+  <text x="510" y="112" class="box-title">rag — chat orchestrator</text>
+  <text x="486" y="126" class="box-sub">uvicorn · :8000 · Chroma+BM25 in-process</text>
+  <rect x="490" y="170" width="82" height="40" rx="4" class="mini mini-dev"/>
+  <text x="531" y="194" class="mini-label">summarize</text>
+  <line x1="572" y1="190" x2="592" y2="190" class="line-dev" marker-end="url(#arrowDev)"/>
+  <rect x="592" y="170" width="90" height="40" rx="4" class="mini mini-dev"/>
+  <text x="637" y="188" class="mini-label">rewrite</text>
+  <text x="637" y="200" class="mini-label" style="font-size:9px;font-weight:400;">_query</text>
+  <line x1="682" y1="190" x2="702" y2="190" class="line-dev" marker-end="url(#arrowDev)"/>
+  <rect x="702" y="170" width="82" height="40" rx="4" class="mini mini-dev"/>
+  <text x="743" y="194" class="mini-label">retrieve</text>
+  <line x1="784" y1="190" x2="804" y2="190" class="line-dev" marker-end="url(#arrowDev)"/>
+  <rect x="804" y="170" width="82" height="40" rx="4" class="mini mini-dev"/>
+  <text x="845" y="194" class="mini-label">generate</text>
+  <text x="486" y="228" class="anno">retrieve → hybrid BM25+dense, SEA-LION-E5 rerank</text>
+  <text x="486" y="242" class="anno">generate → streams tokens back over SSE</text>
+
+  <!-- speech / tts -->
+  <rect x="470" y="280" width="200" height="50" rx="5" class="box"/>
+  <use href="#ic-mic" class="icon-dev" x="482" y="290" width="16" height="16"/>
+  <text x="580" y="301" text-anchor="middle" class="box-title">speech</text>
+  <text x="570" y="316" text-anchor="middle" class="box-sub">faster-whisper · :8002</text>
+
+  <rect x="700" y="280" width="200" height="50" rx="5" class="box"/>
+  <use href="#ic-speaker" class="icon-dev" x="712" y="290" width="16" height="16"/>
+  <text x="810" y="301" text-anchor="middle" class="box-title">tts</text>
+  <text x="800" y="316" text-anchor="middle" class="box-sub">:8003</text>
+
+  <!-- state store -->
+  <rect x="940" y="90" width="130" height="90" rx="5" class="box"/>
+  <use href="#ic-memory" class="icon-dev" x="952" y="98" width="16" height="16"/>
+  <text x="1005" y="128" text-anchor="middle" class="box-title">in-process memory</text>
+  <text x="1005" y="144" text-anchor="middle" class="box-sub">lost on restart</text>
+  <text x="1005" y="158" text-anchor="middle" class="box-sub">cache / rate-limit: off</text>
+
+  <!-- gen backend -->
+  <rect x="940" y="200" width="130" height="70" rx="5" class="box"/>
+  <use href="#ic-terminal" class="icon-dev" x="952" y="208" width="16" height="16"/>
+  <text x="1015" y="222" text-anchor="middle" class="box-title">Ollama</text>
+  <text x="1005" y="237" text-anchor="middle" class="box-sub">localhost:11434</text>
+  <text x="1005" y="251" text-anchor="middle" class="box-sub">CPU, local model</text>
+
+  <!-- dev arrows -->
+  <line x1="170" y1="185" x2="248" y2="185" class="line-dev" marker-end="url(#arrowDev)"/>
+  <line x1="390" y1="178" x2="468" y2="150" class="line-dev" marker-end="url(#arrowDev)"/>
+  <line x1="390" y1="192" x2="468" y2="298" class="line-dev" marker-end="url(#arrowDev)"/>
+  <path d="M 390 200 L 415 200 L 415 348 L 798 348 L 798 332" class="line-dev" marker-end="url(#arrowDev)"/>
+
+  <line x1="886" y1="192" x2="938" y2="222" class="line-dev" marker-end="url(#arrowDev)"/>
+  <text x="893" y="212" class="arrow-label">→ backend</text>
+
+  <path d="M 700 90 L 700 60 L 1005 60 L 1005 88" class="line-dev" marker-end="url(#arrowDev)"/>
+  <text x="905" y="53" class="arrow-label">in-memory state</text>
+
+  <!-- ============ PRODUCTION LANE ============ -->
+  <text x="20" y="422" class="lane-label prod">PRODUCTION — DOCKER COMPOSE</text>
+  <rect x="20" y="430" width="1060" height="300" rx="8" class="lane-rect-prod"/>
+
+  <!-- Browser -->
+  <rect x="50" y="540" width="120" height="50" rx="5" class="box"/>
+  <use href="#ic-browser" class="icon-prod" x="60" y="550" width="16" height="16"/>
+  <text x="118" y="561" text-anchor="middle" class="box-title">Browser</text>
+  <text x="110" y="576" text-anchor="middle" class="box-sub">localhost:3001</text>
+
+  <!-- Frontend -->
+  <rect x="250" y="540" width="140" height="50" rx="5" class="box" style="stroke-width:1.8;"/>
+  <use href="#ic-window" class="icon-prod" x="260" y="550" width="16" height="16"/>
+  <text x="328" y="561" text-anchor="middle" class="box-title">frontend</text>
+  <text x="320" y="576" text-anchor="middle" class="box-sub">container · :3001→3000</text>
+
+  <!-- rag -->
+  <rect x="470" y="470" width="430" height="180" rx="6" class="box" style="stroke-width:1.8;"/>
+  <use href="#ic-chat" class="icon-prod" x="486" y="480" width="17" height="17"/>
+  <text x="510" y="492" class="box-title">rag — chat orchestrator</text>
+  <text x="486" y="506" class="box-sub">container · :8010→8000 · Chroma+BM25 in-process</text>
+  <rect x="490" y="550" width="82" height="40" rx="4" class="mini mini-prod"/>
+  <text x="531" y="574" class="mini-label">summarize</text>
+  <line x1="572" y1="570" x2="592" y2="570" class="line-prod" marker-end="url(#arrowProd)"/>
+  <rect x="592" y="550" width="90" height="40" rx="4" class="mini mini-prod"/>
+  <text x="637" y="568" class="mini-label">rewrite</text>
+  <text x="637" y="580" class="mini-label" style="font-size:9px;font-weight:400;">_query</text>
+  <line x1="682" y1="570" x2="702" y2="570" class="line-prod" marker-end="url(#arrowProd)"/>
+  <rect x="702" y="550" width="82" height="40" rx="4" class="mini mini-prod"/>
+  <text x="743" y="574" class="mini-label">retrieve</text>
+  <line x1="784" y1="570" x2="804" y2="570" class="line-prod" marker-end="url(#arrowProd)"/>
+  <rect x="804" y="550" width="82" height="40" rx="4" class="mini mini-prod"/>
+  <text x="845" y="574" class="mini-label">generate</text>
+  <text x="486" y="608" class="anno">retrieve → hybrid BM25+dense, SEA-LION-E5 rerank</text>
+  <text x="486" y="622" class="anno">generate → streams tokens back over SSE</text>
+
+  <!-- speech / tts -->
+  <rect x="470" y="660" width="200" height="50" rx="5" class="box" style="stroke-width:1.8;"/>
+  <use href="#ic-mic" class="icon-prod" x="482" y="670" width="16" height="16"/>
+  <text x="580" y="681" text-anchor="middle" class="box-title">speech</text>
+  <text x="570" y="696" text-anchor="middle" class="box-sub">container · :8002</text>
+
+  <rect x="700" y="660" width="200" height="50" rx="5" class="box" style="stroke-width:1.8;"/>
+  <use href="#ic-speaker" class="icon-prod" x="712" y="670" width="16" height="16"/>
+  <text x="810" y="681" text-anchor="middle" class="box-title">tts</text>
+  <text x="800" y="696" text-anchor="middle" class="box-sub">container · :8003</text>
+
+  <!-- Redis -->
+  <rect x="940" y="470" width="130" height="90" rx="5" class="box" style="stroke-width:1.8;"/>
+  <use href="#ic-db" class="icon-prod" x="952" y="478" width="16" height="16"/>
+  <text x="1015" y="492" text-anchor="middle" class="box-title">Redis</text>
+  <text x="1005" y="508" text-anchor="middle" class="box-sub">retrieval cache</text>
+  <text x="1005" y="522" text-anchor="middle" class="box-sub">rate limiting</text>
+  <text x="1005" y="536" text-anchor="middle" class="box-sub">(checkpointer: see note 1)</text>
+
+  <!-- vLLM -->
+  <rect x="940" y="580" width="130" height="70" rx="5" class="box" style="stroke-width:1.8;"/>
+  <use href="#ic-chip" class="icon-prod" x="952" y="588" width="16" height="16"/>
+  <text x="1015" y="602" text-anchor="middle" class="box-title">vLLM</text>
+  <text x="1005" y="617" text-anchor="middle" class="box-sub">:8001, GPU</text>
+  <text x="1005" y="631" text-anchor="middle" class="box-sub">4-bit quantized</text>
+
+  <!-- prod arrows -->
+  <line x1="170" y1="565" x2="248" y2="565" class="line-prod" marker-end="url(#arrowProd)"/>
+  <line x1="390" y1="558" x2="468" y2="530" class="line-prod" marker-end="url(#arrowProd)"/>
+  <line x1="390" y1="572" x2="468" y2="678" class="line-prod" marker-end="url(#arrowProd)"/>
+  <path d="M 390 580 L 415 580 L 415 728 L 798 728 L 798 712" class="line-prod" marker-end="url(#arrowProd)"/>
+
+  <line x1="886" y1="572" x2="938" y2="602" class="line-prod" marker-end="url(#arrowProd)"/>
+  <text x="893" y="592" class="arrow-label">→ backend</text>
+
+  <path d="M 700 470 L 700 440 L 1005 440 L 1005 468" class="line-prod" marker-end="url(#arrowProd)"/>
+  <text x="900" y="433" class="arrow-label">cache + rate-limit</text>
+
+  <!-- ============ SHARED EXTERNAL APIS ============ -->
+  <rect x="1120" y="310" width="150" height="150" rx="7" class="ext-rect"/>
+  <use href="#ic-cloud" class="icon-neutral" x="1187" y="325" width="16" height="16"/>
+  <text x="1195" y="358" text-anchor="middle" class="box-title" style="font-size:11.5px;">External APIs</text>
+  <text x="1195" y="378" text-anchor="middle" class="box-sub">ElevenLabs</text>
+  <text x="1195" y="391" text-anchor="middle" class="box-sub">(TTS audio)</text>
+  <text x="1195" y="412" text-anchor="middle" class="box-sub">LiveAvatar / HeyGen</text>
+  <text x="1195" y="425" text-anchor="middle" class="box-sub">(WebRTC avatar)</text>
+  <text x="1195" y="446" text-anchor="middle" class="box-sub" style="fill:var(--accent-neutral);">same in both lanes</text>
+
+  <path d="M 900 305 C 1000 305, 1050 340, 1118 365" class="line-neutral" marker-end="url(#arrowNeutral)"/>
+  <path d="M 900 685 C 1000 685, 1050 450, 1118 410" class="line-neutral" marker-end="url(#arrowNeutral)"/>
+
+  <text x="650" y="925" text-anchor="middle" class="anno" style="font-size:11px;">
+    migrantBuddy: the same four-service topology run two ways — production (bold) vs local dev (light)
+  </text>
+</svg>
