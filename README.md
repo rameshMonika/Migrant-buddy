@@ -447,30 +447,19 @@ than just presence in the top 3:
 | **hybrid_rerank + SEA-LION-E5** | **0.950** | 1.000 | 0.333 | 1.000 | **0.963** | 4872ms |
 
 Why each strategy lands where it does:
-- **BM25 only** misses the correct chunk in the top 3 outright on 4 of 10 queries.
-  Almost all of those misses are non-English queries, where lexical term overlap
-  against the English corpus barely exists.
-- **hybrid_rerank + ms-marco-MiniLM** is *worse than no rerank at all* (0.425 vs.
-  0.783 MRR). It's an English-only cross-encoder rescoring a candidate pool that's
-  70% non-English, so it actively demotes correct chunks that RRF had already
-  surfaced.
-- **hybrid (no rerank) scores below dense-only**, despite matching it on hit@3
-  (0.900 each). Fusing in a noisy BM25 signal doesn't push the correct chunk out of
-  the top 3, but it dilutes dense's already-strong ordering within it, often
-  bumping the right chunk from 1st to 2nd or 3rd, which costs 0.09 MRR.
-- **bge-reranker-v2-m3 and SEA-LION-E5 tie on hit@3 and recall@3** (both a perfect
-  1.000), but SEA-LION-E5 wins on MRR (0.950 vs. 0.817) and nDCG@3 (0.963 vs.
-  0.863). It lands the correct chunk at rank 1 more consistently, which is the
-  whole point of a SEA-LION-tuned reranker on an SEA-language-heavy query set.
-  Latency between the two is a wash (4772ms vs. 4872ms), so the win is rank
-  quality, not speed.
+- **BM25 only** misses the correct chunk in the top 3 on 4 of 10 queries, almost all
+  non-English, where lexical overlap against the English corpus barely exists.
+- **hybrid_rerank + ms-marco-MiniLM** is *worse than no rerank at all*: an
+  English-only cross-encoder demotes correct chunks in a 70%-non-English pool.
+- **hybrid (no rerank) scores below dense-only** despite matching hit@3: the noisy
+  BM25 signal dilutes dense's ordering, often knocking the right chunk to 2nd or 3rd.
+- **SEA-LION-E5 beats bge-reranker-v2-m3 on MRR and nDCG@3** despite tying on hit@3,
+  landing the correct chunk at rank 1 more consistently, at the same latency.
 
-Two numbers here are honestly unexplained rather than papered over. First, hybrid
-(no rerank) clocks faster (55ms) than dense-only (137ms) despite doing strictly more
-work (dense retrieval, BM25, and fusion combined) — likely a benchmark-ordering or
-warm-up artifact, not confirmed. Second, SEA-LION-E5 (a bi-encoder) costs the same
-latency as bge-reranker-v2-m3 (a true cross-encoder), despite the architecture
-difference.
+(Two numbers are unexplained rather than papered over: hybrid-no-rerank benchmarking
+faster than dense-only despite doing more work, and SEA-LION-E5 matching a
+cross-encoder's latency despite being a bi-encoder. See `notebooks/FINDINGS.ipynb`
+for the full run.)
 
 <a id="generation-model-comparison"></a>
 ### Generation model comparison
