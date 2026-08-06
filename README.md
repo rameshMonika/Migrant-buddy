@@ -81,7 +81,7 @@ out, not just asserted.
 | Cache / state | Redis (Memurai on Windows) | LangGraph checkpointer, retrieval cache, rate limiting |
 | Evaluation | Ragas | Retrieval metrics (MRR/precision/recall/nDCG) + generation metrics (faithfulness, answer relevancy), judged by `llama3.1:8b` |
 | Observability | Langfuse | Per-stage tracing across retrieval and the conversation graph (opt-in) |
-| Orchestration | Docker Compose | 8-container local/prod stack — see [Run with Docker](#run-with-docker) |
+| Orchestration | Docker Compose | 8-container stack, alternative to running services as local processes — see [Option B: Docker](#option-b-docker) |
 
 <a id="architecture"></a>
 ## Architecture
@@ -92,7 +92,7 @@ service-name DNS, and every browser-facing hop goes through a published host por
 The same four-service topology runs two ways; what actually changes between them is
 the generation backend and where conversation/cache state lives, shown below.
 
-![migrantBuddy system architecture, dev vs production, with icons](architecture.svg)
+![migrantBuddy system architecture, local dev vs Docker Compose, with icons](architecture.svg)
 
 HTTP (Hypertext Transfer Protocol) carries request/response calls between services;
 WS (WebSocket) carries the persistent, bidirectional connections used for streaming
@@ -141,6 +141,22 @@ copy .env.example .env
 `.env` is loaded automatically (see `src/migrantbuddy/config.py`) and is gitignored —
 never commit real keys. In a deployed environment, set real environment variables
 directly instead of using `.env` (env vars always take priority over it anyway).
+
+Two of these are required just to run the app at all, since the TTS service fails on
+first use without them; the rest are optional. Where to get each value:
+
+- **`ELEVENLABS_API_KEY` / `ELEVENLABS_VOICE_ID`** (required): create an
+  [ElevenLabs](https://elevenlabs.io) account, copy the API key from your profile, and
+  pick a voice ID from the Voices tab.
+- **`LIVEAVATAR_API_KEY` / `LIVEAVATAR_AVATAR_ID`** (required): create a
+  [LiveAvatar](https://docs.liveavatar.com) account, copy the API key and the
+  `avatar_id` of whichever avatar you've picked/created from your dashboard.
+- **`LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST`** (optional,
+  tracing is off unless all three are set): from a [Langfuse](https://langfuse.com)
+  project, under Project Settings → API Keys.
+
+Everything else in `.env.example` is commented out by default and only needs
+uncommenting if you want to override a default (see the full table below).
 
 A few settings are overridable this way (everything else — model names, chunk size,
 etc. — is a fixed architecture decision, not meant to vary by environment):

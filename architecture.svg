@@ -1,12 +1,13 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 950" font-family="ui-monospace, Consolas, 'SF Mono', 'Roboto Mono', monospace">
-  <title>migrantBuddy distributed service architecture — dev vs production</title>
+  <title>migrantBuddy distributed service architecture — local dev vs Docker Compose</title>
   <desc>
     Two-lane diagram. Dev lane (light, dashed): browser talks to a local Next.js frontend,
     which calls rag, speech, and tts as local uvicorn processes; rag's generate node calls
-    Ollama; state lives in process memory. Production lane (bold, solid): browser talks to a
-    containerized frontend, which calls containerized rag, speech, and tts; rag's generate
-    node calls vLLM on GPU; rag's retrieval cache and rate limiting write to a Redis
-    container. Both lanes' tts service calls the same external ElevenLabs and LiveAvatar APIs.
+    Ollama; state lives in process memory. Docker Compose lane (bold, solid): browser talks
+    to a containerized frontend, which calls containerized rag, speech, and tts; rag's
+    generate node calls vLLM on GPU; rag's retrieval cache and rate limiting write to a
+    Redis container. Both lanes' tts service calls the same external ElevenLabs and
+    LiveAvatar APIs.
   </desc>
 
   <defs>
@@ -185,8 +186,8 @@
   <path d="M 700 90 L 700 60 L 1005 60 L 1005 88" class="line-dev" marker-end="url(#arrowDev)"/>
   <text x="905" y="53" class="arrow-label">in-memory state</text>
 
-  <!-- ============ PRODUCTION LANE ============ -->
-  <text x="20" y="422" class="lane-label prod">PRODUCTION — DOCKER COMPOSE</text>
+  <!-- ============ DOCKER COMPOSE LANE ============ -->
+  <text x="20" y="422" class="lane-label prod">DOCKER COMPOSE — CONTAINERIZED</text>
   <rect x="20" y="430" width="1060" height="300" rx="8" class="lane-rect-prod"/>
 
   <!-- Browser -->
@@ -273,6 +274,6 @@
   <path d="M 900 685 C 1000 685, 1050 450, 1118 410" class="line-neutral" marker-end="url(#arrowNeutral)"/>
 
   <text x="650" y="925" text-anchor="middle" class="anno" style="font-size:11px;">
-    migrantBuddy: the same four-service topology run two ways — production (bold) vs local dev (light)
+    migrantBuddy: the same four-service topology run two ways — Docker Compose (bold) vs local dev (light)
   </text>
 </svg>
