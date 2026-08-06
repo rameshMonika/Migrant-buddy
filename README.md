@@ -8,6 +8,38 @@ See `CLAUDE.md` for the full architecture and the decisions behind it. This file
 covers what the project is, the stack it's built on, how to run it, how the RAG
 pipeline actually works, and the eval results behind the model/retrieval choices.
 
+## Contents
+
+- [What it does](#what-it-does)
+- [Tech stack](#tech-stack)
+- [Architecture](#architecture)
+- [Prerequisites](#prerequisites)
+  - [Configuration](#configuration)
+    - [Conversational memory backend](#conversational-memory-backend)
+    - [Retrieval caching](#retrieval-caching)
+    - [Rate limiting](#rate-limiting)
+    - [Speech-to-text](#speech-to-text)
+    - [Text-to-speech + avatar](#text-to-speech--avatar)
+    - [Streaming answers](#streaming-answers)
+    - [Observability (Langfuse)](#observability-langfuse)
+- [1. Backend setup](#1-backend-setup)
+- [2. Build the data (ingestion → chunking → embedding → indexing)](#2-build-the-data)
+- [3. Run the backend services](#3-run-the-backend-services)
+- [4. Run the frontend](#4-run-the-frontend)
+- [Run with Docker](#run-with-docker)
+- [How the RAG pipeline works](#how-the-rag-pipeline-works)
+  - [Ingestion — fetch, extract, validate](#ingestion--fetch-extract-validate)
+  - [Chunking — structure-aware, five deterministic passes](#chunking--structure-aware-five-deterministic-passes)
+  - [Embedding — BGE-M3 (settled)](#embedding--bge-m3-settled)
+  - [Retrieval — hybrid BM25 + dense, then rerank (settled)](#retrieval--hybrid-bm25--dense-then-rerank-settled)
+  - [Generation — SEA-LION 8B (settled)](#generation--sea-lion-8b-settled)
+  - [Conversation memory — LangGraph](#conversation-memory--langgraph)
+- [Evaluation results](#evaluation-results)
+  - [Reranker comparison](#reranker-comparison)
+  - [Generation model comparison](#generation-model-comparison)
+- [Project status](#project-status)
+
+<a id="what-it-does"></a>
 ## What it does
 
 A migrant worker asks a question — by typing, or by speaking into the browser — in
@@ -31,6 +63,7 @@ never becomes a separate pipeline stage on either side of the request. See
 [How the RAG pipeline works](#how-the-rag-pipeline-works) below for how that's proven
 out, not just asserted.
 
+<a id="tech-stack"></a>
 ## Tech stack
 
 | Layer | Technology | Used for |
@@ -54,6 +87,7 @@ out, not just asserted.
 | Observability | Langfuse | Per-stage tracing across retrieval and the conversation graph (opt-in) |
 | Orchestration | Docker Compose | 8-container local/prod stack — see [Run with Docker](#run-with-docker) |
 
+<a id="architecture"></a>
 ## Architecture
 
 Four services the team owns, plus backing stores/model runtimes, plus two
@@ -73,6 +107,7 @@ service-name DNS; every browser-facing hop goes through a published host port.
 - Each ships as its own Docker build `target` from one shared `Dockerfile`, with its
   own pushable image, for independent deploys.
 
+<a id="prerequisites"></a>
 ## Prerequisites
 
 - Python 3.12+
@@ -87,6 +122,7 @@ service-name DNS; every browser-facing hop goes through a published host port.
   build from [ffmpeg.org](https://ffmpeg.org/download.html)) and confirm with
   `ffmpeg -version`.
 
+<a id="configuration"></a>
 ### Configuration
 
 For local secrets (Langfuse keys) and any config overrides, copy `.env.example` to
@@ -136,6 +172,7 @@ etc. — is a fixed architecture decision, not meant to vary by environment):
 | `MIGRANTBUDDY_LIVEAVATAR_IS_SANDBOX` | `true` | Sandbox mode — test without consuming LiveAvatar credits; turn off for a real end-to-end check |
 | `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST` | unset (tracing off) | Enables Langfuse tracing when **all three** are set — see below |
 
+<a id="conversational-memory-backend"></a>
 #### Conversational memory backend
 
 Defaults to `memory` — LangGraph's built-in in-memory checkpointer, no external service,
@@ -149,6 +186,7 @@ Redis-API-compatible server that installs as a normal Windows service — no Doc
 WSL2. It listens on `localhost:6379` by default, matching `MIGRANTBUDDY_REDIS_URL`'s
 default.
 
+<a id="retrieval-caching"></a>
 #### Retrieval caching
 
 Off by default, separate toggle from the checkpointer (you may want one without the
@@ -159,6 +197,7 @@ falls back to computing retrieval fresh, and a stale cache entry (e.g. a chunk_i
 before a re-ingestion) is detected and discarded rather than crashing — this cache is
 purely a latency optimization, never a correctness requirement.
 
+<a id="rate-limiting"></a>
 #### Rate limiting
 
 Off by default. Setting `MIGRANTBUDDY_RATE_LIMIT_ENABLED=true` limits `/chat` (only —
@@ -169,10 +208,11 @@ exceeded. This exists because Ollama/vLLM can't meaningfully serve concurrent re
 time out ugly instead of failing cleanly. Like the retrieval cache, this fails open: a
 Redis error allows the request through rather than locking everyone out.
 
+<a id="speech-to-text"></a>
 #### Speech-to-text
 
 Runs as its own service (`migrantbuddy.speech.main`, port 8002 by default), independent
-of the RAG service — see "Run the backend services" below. The 🎤 button next to the
+of the RAG service — see [Run the backend services](#3-run-the-backend-services) below. The 🎤 button next to the
 chat input opens a WebSocket directly to it (`/transcribe/ws`) and streams audio live as
 you speak (`faster-whisper`, multilingual — no language is pinned, so it auto-detects
 Burmese/Tamil/Thai/Vietnamese/etc.); transcribed text appears in the input box
@@ -183,6 +223,7 @@ employment/legal-rights questions, where getting the question right matters.
 against CPU-only inference speed; bump it up if you have a GPU
 (`MIGRANTBUDDY_WHISPER_DEVICE=cuda`) or down if `small` is too slow.
 
+<a id="text-to-speech--avatar"></a>
 #### Text-to-speech + avatar
 
 Runs as its own service (`migrantbuddy.tts.main`, port 8003 by default), independent
@@ -210,14 +251,16 @@ service will fail on first use without all four.
 `MIGRANTBUDDY_LIVEAVATAR_IS_SANDBOX` defaults to `true` so local dev/testing doesn't
 burn LiveAvatar credits; turn it off for a real end-to-end check.
 
+<a id="streaming-answers"></a>
 #### Streaming answers
 
 `/chat` streams the answer back token-by-token (Server-Sent Events: `sources` once
 retrieval completes, then repeated `token` events, then `done`) rather than waiting
 for the full answer — reduces perceived latency since text (and, per above, audio)
 starts appearing well before generation finishes. This is the same event stream the
-TTS sentence-buffering logic in "Text-to-speech + avatar" reads from.
+TTS sentence-buffering logic in [Text-to-speech + avatar](#text-to-speech--avatar) reads from.
 
+<a id="observability-langfuse"></a>
 #### Observability (Langfuse)
 
 Tracing is opt-in and off by default. Setting `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`,
@@ -229,6 +272,7 @@ in the Langfuse UI. Because this app can handle sensitive queries (e.g. workplac
 complaints), think about whether self-hosting Langfuse makes more sense than sending
 query text to a third-party cloud instance.
 
+<a id="1-backend-setup"></a>
 ## 1. Backend setup
 
 From the project root:
@@ -245,6 +289,7 @@ Run the test suite (all mocked — no Ollama/Chroma/network needed):
 pytest -v
 ```
 
+<a id="2-build-the-data"></a>
 ## 2. Build the data (ingestion → chunking → embedding → indexing)
 
 The FastAPI backend reads `data/processed/chunks.json` and a Chroma collection at
@@ -259,6 +304,7 @@ script), so run these in order and let each one finish:
 
 Once these have run, `data/processed/` has everything the backend needs.
 
+<a id="3-run-the-backend-services"></a>
 ## 3. Run the backend services
 
 Three independent services, run as three separate processes -- the RAG service
@@ -285,6 +331,7 @@ curl http://localhost:8003/health
 Only need some of these? The chat UI works fine without the Whisper/TTS services
 running -- it just means the 🎤 button won't connect and answers won't be spoken.
 
+<a id="4-run-the-frontend"></a>
 ## 4. Run the frontend
 
 ```powershell
@@ -301,6 +348,7 @@ the Whisper service directly at `NEXT_PUBLIC_WHISPER_WS_URL` (defaults to
 `NEXT_PUBLIC_TTS_API_BASE_URL` (defaults to `http://localhost:8003`) -- there's no
 proxying between any of them.
 
+<a id="run-with-docker"></a>
 ## Run with Docker
 
 An alternative to steps 1, 3, and 4 above — runs the RAG service, Whisper service,
@@ -358,12 +406,14 @@ whole reason vLLM's here — it was previously blocked by a Windows-only Long Pa
 installing natively) — switch back to `ollama` any time by editing that one env var in
 `docker-compose.yml`, no rebuild needed, just `docker compose up -d rag`.
 
+<a id="how-the-rag-pipeline-works"></a>
 ## How the RAG pipeline works
 
 One request flows through offline ingestion (notebook-driven, run once per corpus
 change) and five online stages per turn: summarize → rewrite query → retrieve →
 rerank → generate.
 
+<a id="ingestion--fetch-extract-validate"></a>
 ### Ingestion — fetch, extract, validate
 
 Five MOM source URLs, each hand-tagged with a `category` (salary, working-hours,
@@ -385,6 +435,7 @@ work-permit, medical, help) — deliberately not a corpus-wide crawl:
    boilerplate stripping). This is exactly how the WICA and housing pages got caught
    and dropped.
 
+<a id="chunking--structure-aware-five-deterministic-passes"></a>
 ### Chunking — structure-aware, five deterministic passes
 
 Pure text transformation, no I/O or model loading. Token counting is a heuristic
@@ -410,12 +461,14 @@ variants.
    that document's chunks; raises if they don't match, catching a split table rather
    than silently shipping a broken chunk.
 
+<a id="embedding--bge-m3-settled"></a>
 ### Embedding — BGE-M3 (settled)
 
 `BAAI/bge-m3`, 1024-dim, multilingual — chosen specifically so queries in Tamil,
 Burmese, Thai, etc. retrieve directly against the English-source corpus with no
 pre-retrieval translation step.
 
+<a id="retrieval--hybrid-bm25--dense-then-rerank-settled"></a>
 ### Retrieval — hybrid BM25 + dense, then rerank (settled)
 
 Chroma indexes BGE-M3 dense vectors; `rank_bm25` runs lexical scoring in parallel;
@@ -433,6 +486,7 @@ original and an English-translated query, then merge) as a targeted fix for that
 BM25 weakness — parked until real user query examples exist to confirm it's an
 actual problem.
 
+<a id="generation--sea-lion-8b-settled"></a>
 ### Generation — SEA-LION 8B (settled)
 
 `aisingapore/Llama-SEA-LION-v3-8B-IT`, chosen over `qwen3:8b` at the same parameter
@@ -441,6 +495,7 @@ directly in the query's language — confirmed by a 10-query smoke test (7
 non-English) with no "answer in the query's language" instruction in the system
 prompt; it answered natively every time anyway.
 
+<a id="conversation-memory--langgraph"></a>
 ### Conversation memory — LangGraph
 
 Multi-turn state lives server-side, keyed by `thread_id` — the frontend only ever
@@ -460,6 +515,7 @@ nodes per turn:
   deliberate two-phase invoke, not a single blocking call, purely to make streaming
   and checkpointing compatible.
 
+<a id="evaluation-results"></a>
 ## Evaluation results
 
 Every retrieval or prompt change that graduates out of a notebook carries a
@@ -468,6 +524,7 @@ Retrieval is scored on MRR/precision/recall/nDCG against a labeled (query,
 relevant-chunk) set; generation on faithfulness (groundedness to retrieved context)
 and answer relevancy, both judged by `llama3.1:8b`.
 
+<a id="reranker-comparison"></a>
 ### Reranker comparison
 
 10 labeled queries (7 non-English), 16-chunk corpus, k=3. Each query has exactly one
@@ -507,6 +564,7 @@ more work (dense + BM25 + fusion) — likely a benchmark-ordering/warm-up artifa
 not confirmed; and SEA-LION-E5 (noted as a bi-encoder) costing the same latency as
 bge-reranker-v2-m3 (a true cross-encoder) despite the architecture difference.
 
+<a id="generation-model-comparison"></a>
 ### Generation model comparison
 
 Ragas, judge `llama3.1:8b`, embeddings BGE-M3, retrieval held constant (hybrid +
@@ -534,6 +592,7 @@ directional result, not a statistically robust one, but a real edge on the metri
 that matters most for a compliance-adjacent domain: don't say things that aren't in
 the source.
 
+<a id="project-status"></a>
 ## Project status
 
 Core pipeline choices (BGE-M3 embedding, hybrid BM25+dense retrieval, SEA-LION-E5
