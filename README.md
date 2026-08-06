@@ -474,20 +474,20 @@ SEA-LION-E5 rerank) except where noted:
 | C | hybrid + SEA-LION-E5 | qwen3:8b | 0.794 | 0.828 |
 | **D** | hybrid + SEA-LION-E5 | **SEA-LION-v3-8B-IT** | **0.900** | 0.813 |
 
-Burmese and Thai queries dropped from the 10-query set for runs C and D — Burmese scored 1.0 in
-Run A vs 0.25 in Run B on the *identical* query (traced to qwen3 generation
-randomness, not a retrieval regression), and Thai scored 0.0 in every run regardless
-of model or retrieval (a judge limitation — `llama3.1:8b` struggles to verify
-Thai-language answers against English-source context). Both excluded so the
-generation-model comparison wasn't swamped by judge noise unrelated to what was
-being tested.
+Runs C and D drop the Burmese and Thai queries from the original 10-query set. Burmese
+scored 1.0 in Run A but 0.25 in Run B on the *identical* query, which we traced to
+qwen3 generation randomness rather than a retrieval regression. Thai scored 0.0 in
+every run regardless of model or retrieval, a judge limitation, since `llama3.1:8b`
+struggles to verify Thai-language answers against English-source context. Both were
+excluded so the generation-model comparison wasn't swamped by judge noise unrelated
+to what was being tested.
 
-Net: SEA-LION generation gives a real faithfulness edge (+0.106 over qwen3:8b on the
-same 8 queries, every SEA-LION answer scoring ≥0.7 vs two flagged qwen3:8b answers)
-at a small enough answer-relevancy cost (−0.015) to read as noise on 8 queries — a
-directional result, not a statistically robust one, but a real edge on the metric
-that matters most for a compliance-adjacent domain: don't say things that aren't in
-the source.
+Net, SEA-LION generation gives a real faithfulness edge over qwen3:8b on the same 8
+queries (+0.106, with every SEA-LION answer scoring 0.7 or higher versus two flagged
+qwen3:8b answers), at a small enough answer-relevancy cost (−0.015) to read as noise
+on 8 queries. It's a directional result, not a statistically robust one, but a real
+edge on the metric that matters most for a compliance-adjacent domain: don't say
+things that aren't in the source.
 
 <a id="architectural-decisions"></a>
 ## Architectural decisions
