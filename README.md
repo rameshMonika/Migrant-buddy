@@ -433,8 +433,9 @@ and answer relevancy, both judged by `llama3.1:8b`.
 
 10 labeled queries (7 non-English), 16-chunk corpus, k=3. Each query has exactly one
 labeled-relevant chunk, so `recall@3` is always identical to `hit@3`, and
-`precision@3` is always `hit@3 / 3` (capped at 0.333 even under perfect retrieval) —
-the real signal is MRR and nDCG@3, which are rank-position-sensitive:
+`precision@3` is always `hit@3 / 3` (capped at 0.333 even under perfect retrieval). The
+real signal here is MRR and nDCG@3, since both are sensitive to rank position rather
+than just presence in the top 3:
 
 | Strategy | MRR | Hit@3 | P@3 | Recall@3 | nDCG@3 | Latency |
 |---|---|---|---|---|---|---|
@@ -446,27 +447,30 @@ the real signal is MRR and nDCG@3, which are rank-position-sensitive:
 | **hybrid_rerank + SEA-LION-E5** | **0.950** | 1.000 | 0.333 | 1.000 | **0.963** | 4872ms |
 
 Why each strategy lands where it does:
-- **BM25 only** misses the correct chunk in top-3 on 4 of 10 queries outright —
-  almost all non-English, where lexical term overlap against the English corpus
-  barely exists.
-- **hybrid_rerank + ms-marco-MiniLM** is *worse than no rerank at all* (0.425 vs
-  0.783 MRR): an English-only cross-encoder rescoring a 70%-non-English candidate
-  pool actively demotes correct chunks that RRF had already surfaced.
-- **hybrid (no rerank) scores below dense-only** despite identical hit@3 (0.900):
-  fusing in a noisy BM25 signal doesn't push the correct chunk out of the top 3, but
-  dilutes dense's already-strong ordering within it, bumping the right chunk from
-  1st to 2nd/3rd often enough to cost 0.09 MRR.
-- **bge-reranker-v2-m3 and SEA-LION-E5 tie on hit@3/recall@3** (both perfect 1.000)
-  but SEA-LION-E5 wins on MRR (0.950 vs 0.817) and nDCG@3 (0.963 vs 0.863) — it lands
-  the correct chunk at rank 1 more consistently, which is the whole point of a
-  SEA-LION-tuned reranker on an SEA-language-heavy query set. Latency between the two
-  is a wash (4772ms vs 4872ms) — the win is rank quality, not speed.
+- **BM25 only** misses the correct chunk in the top 3 outright on 4 of 10 queries.
+  Almost all of those misses are non-English queries, where lexical term overlap
+  against the English corpus barely exists.
+- **hybrid_rerank + ms-marco-MiniLM** is *worse than no rerank at all* (0.425 vs.
+  0.783 MRR). It's an English-only cross-encoder rescoring a candidate pool that's
+  70% non-English, so it actively demotes correct chunks that RRF had already
+  surfaced.
+- **hybrid (no rerank) scores below dense-only**, despite matching it on hit@3
+  (0.900 each). Fusing in a noisy BM25 signal doesn't push the correct chunk out of
+  the top 3, but it dilutes dense's already-strong ordering within it, often
+  bumping the right chunk from 1st to 2nd or 3rd, which costs 0.09 MRR.
+- **bge-reranker-v2-m3 and SEA-LION-E5 tie on hit@3 and recall@3** (both a perfect
+  1.000), but SEA-LION-E5 wins on MRR (0.950 vs. 0.817) and nDCG@3 (0.963 vs.
+  0.863). It lands the correct chunk at rank 1 more consistently, which is the
+  whole point of a SEA-LION-tuned reranker on an SEA-language-heavy query set.
+  Latency between the two is a wash (4772ms vs. 4872ms), so the win is rank
+  quality, not speed.
 
-Two numbers here are honestly unexplained rather than papered over: hybrid
-(no-rerank) clocking faster (55ms) than dense-only (137ms) despite doing strictly
-more work (dense + BM25 + fusion) — likely a benchmark-ordering/warm-up artifact,
-not confirmed; and SEA-LION-E5 (noted as a bi-encoder) costing the same latency as
-bge-reranker-v2-m3 (a true cross-encoder) despite the architecture difference.
+Two numbers here are honestly unexplained rather than papered over. First, hybrid
+(no rerank) clocks faster (55ms) than dense-only (137ms) despite doing strictly more
+work (dense retrieval, BM25, and fusion combined) — likely a benchmark-ordering or
+warm-up artifact, not confirmed. Second, SEA-LION-E5 (a bi-encoder) costs the same
+latency as bge-reranker-v2-m3 (a true cross-encoder), despite the architecture
+difference.
 
 <a id="generation-model-comparison"></a>
 ### Generation model comparison
