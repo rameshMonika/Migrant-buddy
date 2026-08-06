@@ -17,12 +17,12 @@ MOM documents, in whatever language the question was asked in.
   - [Option A: Local](#option-a-local)
   - [Option B: Docker](#option-b-docker)
 - [How the RAG pipeline works](#how-the-rag-pipeline-works)
-  - [Ingestion — fetch, extract, validate](#ingestion--fetch-extract-validate)
-  - [Chunking — structure-aware, five deterministic passes](#chunking--structure-aware-five-deterministic-passes)
-  - [Embedding — BGE-M3 (settled)](#embedding--bge-m3-settled)
-  - [Retrieval — hybrid BM25 + dense, then rerank (settled)](#retrieval--hybrid-bm25--dense-then-rerank-settled)
-  - [Generation — SEA-LION 8B (settled)](#generation--sea-lion-8b-settled)
-  - [Conversation memory — LangGraph](#conversation-memory--langgraph)
+  - [Ingestion, fetch, extract, validate](#ingestion--fetch-extract-validate)
+  - [Chunking, structure-aware, five deterministic passes](#chunking--structure-aware-five-deterministic-passes)
+  - [Embedding, BGE-M3 (settled)](#embedding--bge-m3-settled)
+  - [Retrieval, hybrid BM25 + dense, then rerank (settled)](#retrieval--hybrid-bm25--dense-then-rerank-settled)
+  - [Generation, SEA-LION 8B (settled)](#generation--sea-lion-8b-settled)
+  - [Conversation memory, LangGraph](#conversation-memory--langgraph)
 - [Evaluation results](#evaluation-results)
   - [Reranker comparison](#reranker-comparison)
   - [Generation model comparison](#generation-model-comparison)
@@ -309,103 +309,127 @@ One request flows through offline ingestion (notebook-driven, run once per corpu
 change) and five online stages per turn: summarize → rewrite query → retrieve →
 rerank → generate.
 
+```mermaid
+flowchart LR
+    subgraph OFF["Offline ingestion (notebook-driven, run once per corpus change)"]
+        direction LR
+        A[Fetch & cache raw HTML] --> B[Extract to markdown]
+        B --> C[Assemble & validate record]
+        C --> D[Chunk<br/>structure-aware, 300-500 tok]
+        D --> E[Embed & index<br/>BGE-M3 + Chroma + BM25]
+    end
+
+    Q([Query, any supported language]) --> S
+
+    subgraph ON["Online, per conversation turn"]
+        direction LR
+        S[1. Summarize] --> RW[2. Rewrite query]
+        RW --> RT[3. Retrieve<br/>hybrid BM25 + dense]
+        RT --> RR[4. Rerank<br/>SEA-LION-E5]
+        RR --> GEN[5. Generate<br/>SEA-LION 8B, streamed]
+    end
+
+    E -.index feeds.-> RT
+    GEN --> OUT([Answer streamed back<br/>in the query's language])
+```
+
 <a id="ingestion--fetch-extract-validate"></a>
-### Ingestion — fetch, extract, validate
+### Ingestion, fetch, extract, validate
 
 Five MOM source URLs, each hand-tagged with a `category` (salary, working-hours,
-work-permit, medical, help) — deliberately not a corpus-wide crawl:
+work-permit, medical, help), deliberately not a corpus-wide crawl:
 
-1. **Fetch & cache raw HTML** — plain `requests.get`, then the untouched HTML is
+1. **Fetch & cache raw HTML**: plain `requests.get`, then the untouched HTML is
    written to disk *before* any parsing, so extraction can be re-run and debugged
    offline without re-hitting mom.gov.sg.
-2. **Extract to markdown** — `trafilatura.extract(..., include_tables=True,
+2. **Extract to markdown**: `trafilatura.extract(..., include_tables=True,
    favor_precision=False)`. `favor_precision=False` is deliberate: trafilatura's
    precision mode trims aggressively and risks cutting real guidance text along with
    boilerplate; recall matters more here.
-3. **Assemble the record** — stamps a stable `document_id` (slugified URL),
+3. **Assemble the record**: stamps a stable `document_id` (slugified URL),
    `authority="MOM"`, the per-source `category`, and `content_type=
    "official_guidance"`. The corpus itself is monolingual English; multilinguality
    lives entirely on the query side, not in the source documents.
-4. **Validate before trusting it** — hard-fails on a missing title, empty text, or
+4. **Validate before trusting it**: hard-fails on a missing title, empty text, or
    text under 500 characters (catches a page reduced to near-nothing after
    boilerplate stripping). This is exactly how the WICA and housing pages got caught
    and dropped.
 
 <a id="chunking--structure-aware-five-deterministic-passes"></a>
-### Chunking — structure-aware, five deterministic passes
+### Chunking, structure-aware, five deterministic passes
 
 Pure text transformation, no I/O or model loading. Token counting is a heuristic
-(`len(text) // 4`), not a real tokenizer — accurate enough to budget chunk sizes
+(`len(text) // 4`), not a real tokenizer, accurate enough to budget chunk sizes
 without a tokenizer dependency. Target: 300–500 tokens, 15–20% overlap, tuned
 against a naive fixed-window baseline across 300/500/800-token and 10%/20%-overlap
 variants.
 
-1. **Split on headings** — regex-matches `##`/`###` lines and walks them with a
+1. **Split on headings**: regex-matches `##`/`###` lines and walks them with a
    level-aware stack, so each section keeps a full breadcrumb (e.g. *"Overtime pay >
    How overtime pay is calculated"*).
-2. **Merge undersized sections** — heading-splitting alone leaves plenty of sections
+2. **Merge undersized sections**: heading-splitting alone leaves plenty of sections
    smaller than the 300-token floor; adjacent sections are merged forward greedily
    until the next one would exceed `chunk_size`.
-3. **Protect tables, then split oversized sections** — any section still over budget
+3. **Protect tables, then split oversized sections**: any section still over budget
    is recursively split at paragraph boundaries with overlap. Every markdown table
    is swapped for a placeholder before splitting, so the splitter can never land
-   inside one — tables stay whole even if that pushes a chunk over the nominal size.
-4. **Prefix a breadcrumb** — every chunk is prefixed with `"{document title} >
+   inside one; tables stay whole even if that pushes a chunk over the nominal size.
+4. **Prefix a breadcrumb**: every chunk is prefixed with `"{document title} >
    {heading path}"` before embedding, so a chunk retrieved on its own still carries
    enough context to be understood.
-5. **Validate the invariant** — counts table blocks in the source vs. summed across
+5. **Validate the invariant**: counts table blocks in the source vs. summed across
    that document's chunks; raises if they don't match, catching a split table rather
    than silently shipping a broken chunk.
 
 <a id="embedding--bge-m3-settled"></a>
-### Embedding — BGE-M3 (settled)
+### Embedding, BGE-M3 (settled)
 
-`BAAI/bge-m3`, 1024-dim, multilingual — chosen specifically so queries in Tamil,
+`BAAI/bge-m3`, 1024-dim, multilingual, chosen specifically so queries in Tamil,
 Burmese, Thai, etc. retrieve directly against the English-source corpus with no
 pre-retrieval translation step.
 
 <a id="retrieval--hybrid-bm25--dense-then-rerank-settled"></a>
-### Retrieval — hybrid BM25 + dense, then rerank (settled)
+### Retrieval, hybrid BM25 + dense, then rerank (settled)
 
 Chroma indexes BGE-M3 dense vectors; `rank_bm25` runs lexical scoring in parallel;
 results are combined via Reciprocal Rank Fusion (constant 60) over the top-10
 candidates from each, then passed through a reranker. Six strategies were run
-head-to-head — see [Evaluation results](#evaluation-results) for why SEA-LION-E5
+head-to-head, see [Evaluation results](#evaluation-results) for why SEA-LION-E5
 reranking on top of hybrid retrieval won.
 
 **Open question, not yet resolved:** BM25's lexical overlap mostly disappears for
-non-English queries against an English corpus — worth splitting hybrid-vs-dense-only
+non-English queries against an English corpus; worth splitting hybrid-vs-dense-only
 by query language rather than assuming BM25 helps uniformly.
 
 **Deferred, not built:** query rewriting + dual retrieval (retrieve on both the
 original and an English-translated query, then merge) as a targeted fix for that
-BM25 weakness — parked until real user query examples exist to confirm it's an
+BM25 weakness, parked until real user query examples exist to confirm it's an
 actual problem.
 
 <a id="generation--sea-lion-8b-settled"></a>
-### Generation — SEA-LION 8B (settled)
+### Generation, SEA-LION 8B (settled)
 
 `aisingapore/Llama-SEA-LION-v3-8B-IT`, chosen over `qwen3:8b` at the same parameter
 class specifically to isolate language specialization from model size. Generates
-directly in the query's language — confirmed by a 10-query smoke test (7
+directly in the query's language, confirmed by a 10-query smoke test (7
 non-English) with no "answer in the query's language" instruction in the system
 prompt; it answered natively every time anyway.
 
 <a id="conversation-memory--langgraph"></a>
-### Conversation memory — LangGraph
+### Conversation memory, LangGraph
 
-Multi-turn state lives server-side, keyed by `thread_id` — the frontend only ever
+Multi-turn state lives server-side, keyed by `thread_id`; the frontend only ever
 sends `{message, thread_id}`, never full history. A compiled `StateGraph` runs four
 nodes per turn:
 
-- **summarize** — no-op until conversation length crosses a threshold, then
+- **summarize**: no-op until conversation length crosses a threshold, then
   condenses older turns instead of growing the prompt unboundedly.
-- **rewrite_query** — folds history + the latest message into a standalone
+- **rewrite_query**: folds history + the latest message into a standalone
   retrieval query. A bare follow-up like "what about for daily-rated workers?" has
   almost no signal for the retriever on its own.
-- **retrieve** — the hybrid + SEA-LION-E5 rerank path above, optionally hitting the
+- **retrieve**: the hybrid + SEA-LION-E5 rerank path above, optionally hitting the
   Redis retrieval cache first.
-- **generate** — the graph is compiled with `interrupt_before=["generate"]`: it
+- **generate**: the graph is compiled with `interrupt_before=["generate"]`, it
   pauses right before this node so `/chat` can stream the answer token-by-token from
   outside the graph, then write the finished text back in and resume to `END`. A
   deliberate two-phase invoke, not a single blocking call, purely to make streaming
