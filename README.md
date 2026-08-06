@@ -89,12 +89,43 @@ out, not just asserted.
 Four services the team owns, plus backing stores/model runtimes, plus two
 third-party APIs; every internal hop is plain HTTP/WS on the Docker network's
 service-name DNS, and every browser-facing hop goes through a published host port.
+The same four-service topology runs two ways; what actually changes between them is
+the generation backend and where conversation/cache state lives, shown below.
 
-![migrantBuddy system architecture](migrantWorkerArch.png)
+```mermaid
+flowchart TB
+    subgraph DEV["DEV — local, non-Docker"]
+        direction LR
+        UD([Browser<br/>:3000]) --> FD[frontend<br/>npm run dev]
+        FD --> RD["rag<br/>uvicorn · :8000<br/>Chroma+BM25 in-process"]
+        FD --> SD[speech<br/>uvicorn · :8002]
+        FD --> TD[tts<br/>uvicorn · :8003]
+        RD -->|generate calls| OD[Ollama<br/>localhost:11434, CPU]
+        RD -.state.-> MD[in-process memory<br/>lost on restart]
+    end
+
+    subgraph PROD["PRODUCTION — Docker Compose"]
+        direction LR
+        UP([Browser<br/>:3001]) --> FP[frontend container<br/>:3001→3000]
+        FP --> RP["rag container<br/>:8010→8000<br/>Chroma+BM25 in-process"]
+        FP --> SP[speech container<br/>:8002]
+        FP --> TP[tts container<br/>:8003]
+        RP -->|generate calls| VP[vLLM<br/>:8001, GPU, 4-bit quantized]
+        RP -.cache + rate-limit.-> REDIS[Redis]
+    end
+
+    EXT[["External APIs<br/>ElevenLabs (TTS audio)<br/>LiveAvatar/HeyGen (avatar)<br/>same in both lanes"]]
+    TD -.-> EXT
+    TP -.-> EXT
+```
 
 HTTP (Hypertext Transfer Protocol) carries request/response calls between services;
 WS (WebSocket) carries the persistent, bidirectional connections used for streaming
-(e.g. speech-to-text audio, token-by-token chat responses).
+(e.g. speech-to-text audio, token-by-token chat responses). Redis backs the retrieval
+cache and rate limiting in the Docker profile today; the LangGraph checkpointer itself
+still defaults to in-memory even there (`MIGRANTBUDDY_CHECKPOINTER_BACKEND=redis` is
+supported, just not yet the compose default) — see
+[Conversational memory backend](#conversational-memory-backend).
 
 **Why four separate services instead of one monolith:**
 - `rag` is latency-critical (streams tokens) and CPU/GPU-bound on embedding +
