@@ -13,9 +13,9 @@ MOM documents, in whatever language the question was asked in.
   - [Configuration](#configuration)
 - [1. Backend setup](#1-backend-setup)
 - [2. Build the data (ingestion → chunking → embedding → indexing)](#2-build-the-data)
-- [3. Run the backend services](#3-run-the-backend-services)
-- [4. Run the frontend](#4-run-the-frontend)
-- [Run with Docker](#run-with-docker)
+- [3. Run the app](#3-run-the-app)
+  - [Option A: Local](#option-a-local)
+  - [Option B: Docker](#option-b-docker)
 - [How the RAG pipeline works](#how-the-rag-pipeline-works)
   - [Ingestion — fetch, extract, validate](#ingestion--fetch-extract-validate)
   - [Chunking — structure-aware, five deterministic passes](#chunking--structure-aware-five-deterministic-passes)
@@ -150,9 +150,9 @@ etc. — is a fixed architecture decision, not meant to vary by environment):
 | `MIGRANTBUDDY_CHECKPOINTER_BACKEND` | `memory` | `memory` or `redis` — where conversation state (message history, running summary) is persisted — see below |
 | `MIGRANTBUDDY_REDIS_URL` | `redis://localhost:6379` | Redis connection string (only used when `CHECKPOINTER_BACKEND=redis`) |
 | `MIGRANTBUDDY_CONVERSATION_TTL_SECONDS` | `86400` (24h) | How long an idle conversation survives in Redis before expiring (only used when `CHECKPOINTER_BACKEND=redis`) |
-| `MIGRANTBUDDY_RETRIEVAL_CACHE_ENABLED` | `false` | Cache retrieval results in Redis, keyed by (query, top_k) — see below |
+| `MIGRANTBUDDY_RETRIEVAL_CACHE_ENABLED` | `true` | Cache retrieval results in Redis, keyed by (query, top_k) — see below |
 | `MIGRANTBUDDY_RETRIEVAL_CACHE_TTL_SECONDS` | `604800` (7 days) | How long a cached retrieval result lives (only used when `RETRIEVAL_CACHE_ENABLED=true`) |
-| `MIGRANTBUDDY_RATE_LIMIT_ENABLED` | `false` | Rate-limit `/chat` (Redis) — see below |
+| `MIGRANTBUDDY_RATE_LIMIT_ENABLED` | `true` | Rate-limit `/chat` (Redis) — see below |
 | `MIGRANTBUDDY_RATE_LIMIT_MAX_REQUESTS` | `10` | Max requests per client IP per window (only used when `RATE_LIMIT_ENABLED=true`) |
 | `MIGRANTBUDDY_RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate limit window, in seconds (only used when `RATE_LIMIT_ENABLED=true`) |
 | `MIGRANTBUDDY_WHISPER_MODEL_SIZE` | `small` | Whisper model size for speech-to-text (`tiny`/`base`/`small`/`medium`/`large-v3`, etc.) — see below |
@@ -164,7 +164,7 @@ etc. — is a fixed architecture decision, not meant to vary by environment):
 | `ELEVENLABS_API_KEY` | unset (required) | Your ElevenLabs API key — the TTS service won't work without it |
 | `ELEVENLABS_VOICE_ID` | unset (required) | Which ElevenLabs voice to speak with — see below |
 | `MIGRANTBUDDY_ELEVENLABS_MODEL_ID` | `eleven_multilingual_v2` | ElevenLabs model — multilingual to match this project's target languages |
-| `MIGRANTBUDDY_TTS_RATE_LIMIT_ENABLED` | `false` | Rate-limit the TTS service's `/session/start` and `/speak` (Redis) — own toggle/budget, separate from `/chat`'s and Whisper's (ElevenLabs and LiveAvatar are both metered) |
+| `MIGRANTBUDDY_TTS_RATE_LIMIT_ENABLED` | `true` | Rate-limit the TTS service's `/session/start` and `/speak` (Redis) — own toggle/budget, separate from `/chat`'s and Whisper's (ElevenLabs and LiveAvatar are both metered) |
 | `MIGRANTBUDDY_TTS_RATE_LIMIT_MAX_REQUESTS` | `10` | Max requests per client IP per window (only used when `TTS_RATE_LIMIT_ENABLED=true`) |
 | `MIGRANTBUDDY_TTS_RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate limit window, in seconds (only used when `TTS_RATE_LIMIT_ENABLED=true`) |
 | `LIVEAVATAR_API_KEY` | unset (required) | Your LiveAvatar API key — `/session/start` won't work without it |
@@ -205,10 +205,16 @@ script), so run these in order and let each one finish:
 
 Once these have run, `data/processed/` has everything the backend needs.
 
-<a id="3-run-the-backend-services"></a>
-## 3. Run the backend services
+<a id="3-run-the-app"></a>
+## 3. Run the app
 
-Three independent services, run as three separate processes -- the RAG service
+**Step 2 ("Build the data") is a prerequisite either way** — neither option below runs
+the ingestion/chunking/embedding notebook pipeline for you.
+
+<a id="option-a-local"></a>
+### Option A: Local
+
+Three independent backend services, run as three separate processes — the RAG service
 (chat), the Whisper service (speech-to-text), and the TTS service (voice output)
 don't depend on each other at runtime, so any of them can be started, stopped, or
 restarted alone:
@@ -230,10 +236,9 @@ curl http://localhost:8003/health
 ```
 
 Only need some of these? The chat UI works fine without the Whisper/TTS services
-running -- it just means the 🎤 button won't connect and answers won't be spoken.
+running — it just means the 🎤 button won't connect and answers won't be spoken.
 
-<a id="4-run-the-frontend"></a>
-## 4. Run the frontend
+Then run the frontend:
 
 ```powershell
 cd frontend
@@ -246,19 +251,17 @@ Open `http://localhost:3000`. The chat UI calls the RAG service at
 `NEXT_PUBLIC_API_BASE_URL` (set in `.env.local`, defaults to `http://localhost:8000`),
 the Whisper service directly at `NEXT_PUBLIC_WHISPER_WS_URL` (defaults to
 `ws://localhost:8002/transcribe/ws`), and the TTS service directly at
-`NEXT_PUBLIC_TTS_API_BASE_URL` (defaults to `http://localhost:8003`) -- there's no
+`NEXT_PUBLIC_TTS_API_BASE_URL` (defaults to `http://localhost:8003`) — there's no
 proxying between any of them.
 
-<a id="run-with-docker"></a>
-## Run with Docker
+<a id="option-b-docker"></a>
+### Option B: Docker
 
-An alternative to steps 1, 3, and 4 above — runs the RAG service, Whisper service,
-TTS service, frontend, Redis, Ollama, and vLLM as seven containers via one
-`docker-compose.yml`.
-**Step 2 ("Build the data") is still a local prerequisite either way** — Docker doesn't
-run the ingestion/chunking/embedding notebook pipeline, it just bind-mounts whatever
-`data/processed/` those notebooks already produced on your machine (read-write, not
-read-only -- Chroma writes its own SQLite WAL/lock files even when only querying).
+Runs the RAG service, Whisper service, TTS service, frontend, Redis, Ollama, and vLLM
+as seven containers via one `docker-compose.yml` — an alternative to backend setup and
+Option A above, no local Python/Node install needed. Docker still just bind-mounts
+whatever `data/processed/` the notebooks already produced on your machine (read-write,
+not read-only — Chroma writes its own SQLite WAL/lock files even when only querying).
 
 Prerequisites:
 - Docker Desktop
@@ -285,7 +288,7 @@ docker compose exec ollama ollama pull aisingapore/Llama-SEA-LION-v3-8B-IT
 Check everything's up:
 
 ```powershell
-curl http://localhost:8010/health   # RAG (8000 is remapped to 8010 -- see note below)
+curl http://localhost:8010/health   # RAG (8000 is remapped to 8010 — see note below)
 curl http://localhost:8002/health   # Whisper
 curl http://localhost:8003/health   # TTS
 curl http://localhost:8001/v1/models  # vLLM (once the model's finished loading)
@@ -296,7 +299,7 @@ baked in as Docker build args instead of read from `.env.local` (see
 `frontend/Dockerfile`), so they don't need to match your local dev setup.
 
 > **Port note**: `rag` and `frontend` publish on `8010`/`3001` instead of the `8000`/
-> `3000` used by local (non-Docker) dev — those two collided with unrelated containers
+> `3000` used by Option A (local) — those two collided with unrelated containers
 > already running on this machine (an `iot-modified` project's Prometheus exporter on
 > 8000, Grafana on 3000). If you don't have that conflict, feel free to remap both back
 > to `8000`/`3000` in `docker-compose.yml` (update the `rag`/`frontend` `ports:` entries
