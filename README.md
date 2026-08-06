@@ -1,12 +1,8 @@
 # migrantBuddy
 
-RAG system for Singapore migrant workers — answers employment questions (salary,
+RAG system for Singapore migrant workers, answers employment questions (salary,
 working hours, work permits, medical insurance, contact info) grounded in official
 MOM documents, in whatever language the question was asked in.
-
-See `CLAUDE.md` for the full architecture and the decisions behind it. This file
-covers what the project is, the stack it's built on, how to run it, how the RAG
-pipeline actually works, and the eval results behind the model/retrieval choices.
 
 ## Contents
 
@@ -42,7 +38,7 @@ pipeline actually works, and the eval results behind the model/retrieval choices
 <a id="what-it-does"></a>
 ## What it does
 
-A migrant worker asks a question — by typing, or by speaking into the browser — in
+A migrant worker asks a question, by typing, or by speaking into the browser, in
 English, Tamil, Burmese, Thai, Vietnamese, Malay, Filipino, or Indonesian. The system
 retrieves the relevant passage from official MOM (Ministry of Manpower) guidance and
 answers **in the language the question was asked in**, with an optional
@@ -52,13 +48,13 @@ follow than text.
 The corpus is intentionally narrow and real, not a broad scrape: five MOM source
 pages across salary, working hours, work-permit conditions, medical insurance, and
 help/contact info. Three other candidate categories (employment rights, work injury/
-WICA, housing) were evaluated and dropped — their candidate URLs turned out to be
+WICA, housing) were evaluated and dropped; their candidate URLs turned out to be
 navigation-only landing pages with no substantive content, confirmed by fetching them
 directly rather than assumed.
 
 The core design bet: a multilingual embedding model (BGE-M3) retrieves directly
 against non-English queries with no translation step, and a SEA-LION-tuned generation
-model answers natively in that language off English-source context — so translation
+model answers natively in that language off English-source context, so translation
 never becomes a separate pipeline stage on either side of the request. See
 [How the RAG pipeline works](#how-the-rag-pipeline-works) below for how that's proven
 out, not just asserted.
@@ -91,19 +87,23 @@ out, not just asserted.
 ## Architecture
 
 Four services the team owns, plus backing stores/model runtimes, plus two
-third-party APIs — every internal hop is plain HTTP/WS on the Docker network's
-service-name DNS; every browser-facing hop goes through a published host port.
+third-party APIs; every internal hop is plain HTTP/WS on the Docker network's
+service-name DNS, and every browser-facing hop goes through a published host port.
 
 ![migrantBuddy system architecture](migrantWorkerArch.png)
 
+HTTP (Hypertext Transfer Protocol) carries request/response calls between services;
+WS (WebSocket) carries the persistent, bidirectional connections used for streaming
+(e.g. speech-to-text audio, token-by-token chat responses).
+
 **Why four separate services instead of one monolith:**
 - `rag` is latency-critical (streams tokens) and CPU/GPU-bound on embedding +
-  generation — kept lean, no audio dependencies weighing down its image or
+  generation, kept lean, no audio dependencies weighing down its image or
   cold-start.
 - `speech` pulls in `faster-whisper` and a large model cache (its own named volume)
-  independent of RAG's lifecycle — restarted/scaled without touching chat.
+  independent of RAG's lifecycle, restarted/scaled without touching chat.
 - `tts` is two thin outbound HTTP clients (ElevenLabs, LiveAvatar) with no local
-  model — stays a lightweight, fast-building container.
+  model, stays a lightweight, fast-building container.
 - Each ships as its own Docker build `target` from one shared `Dockerfile`, with its
   own pushable image, for independent deploys.
 
