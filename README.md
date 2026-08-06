@@ -213,7 +213,7 @@ the ingestion/chunking/embedding notebook pipeline for you.
 <a id="option-a-local"></a>
 ### Option A: Local
 
-Three independent backend services, run as three separate processes — the RAG service
+Three independent backend services, run as three separate processes, the RAG service
 (chat), the Whisper service (speech-to-text), and the TTS service (voice output)
 don't depend on each other at runtime, so any of them can be started, stopped, or
 restarted alone:
@@ -235,7 +235,7 @@ curl http://localhost:8003/health
 ```
 
 Only need some of these? The chat UI works fine without the Whisper/TTS services
-running — it just means the 🎤 button won't connect and answers won't be spoken.
+running, it just means the 🎤 button won't connect and answers won't be spoken.
 
 Then run the frontend:
 
@@ -250,26 +250,26 @@ Open `http://localhost:3000`. The chat UI calls the RAG service at
 `NEXT_PUBLIC_API_BASE_URL` (set in `.env.local`, defaults to `http://localhost:8000`),
 the Whisper service directly at `NEXT_PUBLIC_WHISPER_WS_URL` (defaults to
 `ws://localhost:8002/transcribe/ws`), and the TTS service directly at
-`NEXT_PUBLIC_TTS_API_BASE_URL` (defaults to `http://localhost:8003`) — there's no
+`NEXT_PUBLIC_TTS_API_BASE_URL` (defaults to `http://localhost:8003`), there's no
 proxying between any of them.
 
 <a id="option-b-docker"></a>
 ### Option B: Docker
 
 Runs the RAG service, Whisper service, TTS service, frontend, Redis, Ollama, and vLLM
-as seven containers via one `docker-compose.yml` — an alternative to backend setup and
+as seven containers via one `docker-compose.yml`, an alternative to backend setup and
 Option A above, no local Python/Node install needed. Docker still just bind-mounts
 whatever `data/processed/` the notebooks already produced on your machine (read-write,
-not read-only — Chroma writes its own SQLite WAL/lock files even when only querying).
+not read-only, Chroma writes its own SQLite WAL/lock files even when only querying).
 
 Prerequisites:
 - Docker Desktop
 - For vLLM specifically: an NVIDIA GPU with Docker Desktop's WSL2 GPU passthrough
   configured (NVIDIA Container Toolkit). Without it, the `vllm` service will fail to
-  start — either set that up first, or remove the `deploy:` block from `vllm` in
+  start, either set that up first, or remove the `deploy:` block from `vllm` in
   `docker-compose.yml` and set `MIGRANTBUDDY_GENERATION_BACKEND=ollama` under `rag`'s
   `environment:` to fall back to Ollama (CPU-friendly, no GPU needed).
-- `.env` at the project root (`copy .env.example .env`) — same file the local setup
+- `.env` at the project root (`copy .env.example .env`), same file the local setup
   uses, for Langfuse keys etc.
 
 ```powershell
@@ -287,26 +287,19 @@ docker compose exec ollama ollama pull aisingapore/Llama-SEA-LION-v3-8B-IT
 Check everything's up:
 
 ```powershell
-curl http://localhost:8010/health   # RAG (8000 is remapped to 8010 — see note below)
+curl http://localhost:8010/health   # RAG (8000 is remapped to 8010)
 curl http://localhost:8002/health   # Whisper
 curl http://localhost:8003/health   # TTS
 curl http://localhost:8001/v1/models  # vLLM (once the model's finished loading)
 ```
 
-Open `http://localhost:3001` (also remapped, see below). The `NEXT_PUBLIC_*` URLs are
+Open `http://localhost:3001` (also remapped). The `NEXT_PUBLIC_*` URLs are
 baked in as Docker build args instead of read from `.env.local` (see
 `frontend/Dockerfile`), so they don't need to match your local dev setup.
 
-> **Port note**: `rag` and `frontend` publish on `8010`/`3001` instead of the `8000`/
-> `3000` used by Option A (local) — those two collided with unrelated containers
-> already running on this machine (an `iot-modified` project's Prometheus exporter on
-> 8000, Grafana on 3000). If you don't have that conflict, feel free to remap both back
-> to `8000`/`3000` in `docker-compose.yml` (update the `rag`/`frontend` `ports:` entries
-> and the `frontend` build `args:`/`rag`'s `MIGRANTBUDDY_FRONTEND_ORIGIN` together).
-
 `rag` defaults to `MIGRANTBUDDY_GENERATION_BACKEND=vllm` in `docker-compose.yml` (the
-whole reason vLLM's here — it was previously blocked by a Windows-only Long Path error
-installing natively) — switch back to `ollama` any time by editing that one env var in
+whole reason vLLM's here, it was previously blocked by a Windows-only Long Path error
+installing natively), switch back to `ollama` any time by editing that one env var in
 `docker-compose.yml`, no rebuild needed, just `docker compose up -d rag`.
 
 <a id="how-the-rag-pipeline-works"></a>
@@ -473,14 +466,14 @@ bge-reranker-v2-m3 (a true cross-encoder) despite the architecture difference.
 Ragas, judge `llama3.1:8b`, embeddings BGE-M3, retrieval held constant (hybrid +
 SEA-LION-E5 rerank) except where noted:
 
-| Run | Retrieval | Generation | n | Faithfulness | Answer Relevancy |
-|---|---|---|---|---|---|
-| A | dense only | qwen3:8b | 10 | 0.846 | 0.792 |
-| B | hybrid + SEA-LION-E5 | qwen3:8b | 10 | 0.771 | 0.774 |
-| C | hybrid + SEA-LION-E5 | qwen3:8b | 8* | 0.794 | 0.828 |
-| **D** | hybrid + SEA-LION-E5 | **SEA-LION-v3-8B-IT** | 8* | **0.900** | 0.813 |
+| Run | Retrieval | Generation | Faithfulness | Answer Relevancy |
+|---|---|---|---|---|
+| A | dense only | qwen3:8b | 0.846 | 0.792 |
+| B | hybrid + SEA-LION-E5 | qwen3:8b | 0.771 | 0.774 |
+| C | hybrid + SEA-LION-E5 | qwen3:8b | 0.794 | 0.828 |
+| **D** | hybrid + SEA-LION-E5 | **SEA-LION-v3-8B-IT** | **0.900** | 0.813 |
 
-\* Burmese and Thai queries dropped from the 10-query set — Burmese scored 1.0 in
+Burmese and Thai queries dropped from the 10-query set for runs C and D — Burmese scored 1.0 in
 Run A vs 0.25 in Run B on the *identical* query (traced to qwen3 generation
 randomness, not a retrieval regression), and Thai scored 0.0 in every run regardless
 of model or retrieval (a judge limitation — `llama3.1:8b` struggles to verify
