@@ -92,9 +92,12 @@ service-name DNS, and every browser-facing hop goes through a published host por
 The same four-service topology runs two ways; what actually changes between them is
 the generation backend and where conversation/cache state lives, shown below.
 
+![migrantBuddy system architecture](migrantWorkerArch.png)
+
 ```mermaid
+%%{init: {"themeVariables": {"lineColor": "#8b93a3", "fontFamily": "ui-monospace, Consolas, monospace"}}}%%
 flowchart TB
-    subgraph DEV["DEV — local, non-Docker"]
+    subgraph DEV["🖥️ DEV — local, non-Docker"]
         direction LR
         UD([Browser<br/>:3000]) --> FD[frontend<br/>npm run dev]
         FD --> RD["rag<br/>uvicorn · :8000<br/>Chroma+BM25 in-process"]
@@ -104,19 +107,32 @@ flowchart TB
         RD -.state.-> MD[in-process memory<br/>lost on restart]
     end
 
-    subgraph PROD["PRODUCTION — Docker Compose"]
+    subgraph PROD["🐳 PRODUCTION — Docker Compose"]
         direction LR
         UP([Browser<br/>:3001]) --> FP[frontend container<br/>:3001→3000]
         FP --> RP["rag container<br/>:8010→8000<br/>Chroma+BM25 in-process"]
         FP --> SP[speech container<br/>:8002]
         FP --> TP[tts container<br/>:8003]
         RP -->|generate calls| VP[vLLM<br/>:8001, GPU, 4-bit quantized]
-        RP -.cache + rate-limit.-> REDIS[Redis]
+        RP -.cache + rate-limit.-> REDIS[(Redis)]
     end
 
-    EXT[["External APIs<br/>ElevenLabs (TTS audio)<br/>LiveAvatar/HeyGen (avatar)<br/>same in both lanes"]]
+    EXT[["🌐 External APIs<br/>ElevenLabs (TTS audio)<br/>LiveAvatar/HeyGen (avatar)<br/>same in both lanes"]]
     TD -.-> EXT
     TP -.-> EXT
+
+    classDef devNode fill:#eef1f6,stroke:#5b6b82,stroke-width:1.5px,color:#1c2333;
+    classDef prodNode fill:#fdece1,stroke:#c2410c,stroke-width:2.5px,color:#1c2333;
+    classDef extNode fill:#f3f4f7,stroke:#8b93a3,stroke-width:1.5px,stroke-dasharray:4 3,color:#1c2333;
+    classDef devEndpoint fill:#5b6b82,stroke:#5b6b82,color:#ffffff;
+    classDef prodEndpoint fill:#c2410c,stroke:#c2410c,color:#ffffff;
+
+    class UD,FD,RD,SD,TD,OD,MD devNode;
+    class UP,FP,RP,SP,TP,VP,REDIS prodNode;
+    class EXT extNode;
+
+    style DEV fill:#f7f8fa,stroke:#5b6b82,stroke-width:1.5px,stroke-dasharray:6 4;
+    style PROD fill:#fdf3ee,stroke:#c2410c,stroke-width:2.5px;
 ```
 
 HTTP (Hypertext Transfer Protocol) carries request/response calls between services;
