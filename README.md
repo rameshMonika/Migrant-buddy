@@ -99,7 +99,7 @@ WS (WebSocket) carries the persistent, bidirectional connections used for stream
 (e.g. speech-to-text audio, token-by-token chat responses). Redis backs the retrieval
 cache and rate limiting in the Docker profile today; the LangGraph checkpointer itself
 still defaults to in-memory even there (`MIGRANTBUDDY_CHECKPOINTER_BACKEND=redis` is
-supported, just not yet the compose default) — see
+supported, just not yet the compose default), see
 [Conversational memory backend](#conversational-memory-backend).
 
 **Why four separate services instead of one monolith:**
