@@ -19,9 +19,9 @@ MOM documents, in whatever language the question was asked in.
 - [How the RAG pipeline works](#how-the-rag-pipeline-works)
   - [Ingestion, fetch, extract, validate](#ingestion--fetch-extract-validate)
   - [Chunking, structure-aware, five deterministic passes](#chunking--structure-aware-five-deterministic-passes)
-  - [Embedding, BGE-M3 (settled)](#embedding--bge-m3-settled)
-  - [Retrieval, hybrid BM25 + dense, then rerank (settled)](#retrieval--hybrid-bm25--dense-then-rerank-settled)
-  - [Generation, SEA-LION 8B (settled)](#generation--sea-lion-8b-settled)
+  - [Embedding, BGE-M3](#embedding--bge-m3-settled)
+  - [Retrieval, hybrid BM25 + dense, then rerank](#retrieval--hybrid-bm25--dense-then-rerank-settled)
+  - [Generation, SEA-LION 8B](#generation--sea-lion-8b-settled)
   - [Conversation memory, LangGraph](#conversation-memory--langgraph)
 - [Evaluation results](#evaluation-results)
   - [Reranker comparison](#reranker-comparison)
@@ -366,14 +366,14 @@ variants.
    than silently shipping a broken chunk.
 
 <a id="embedding--bge-m3-settled"></a>
-### Embedding, BGE-M3 (settled)
+### Embedding, BGE-M3
 
 `BAAI/bge-m3`, 1024-dim, multilingual, chosen specifically so queries in Tamil,
 Burmese, Thai, etc. retrieve directly against the English-source corpus with no
 pre-retrieval translation step.
 
 <a id="retrieval--hybrid-bm25--dense-then-rerank-settled"></a>
-### Retrieval, hybrid BM25 + dense, then rerank (settled)
+### Retrieval, hybrid BM25 + dense, then rerank
 
 Chroma indexes BGE-M3 dense vectors; `rank_bm25` runs lexical scoring in parallel;
 results are combined via Reciprocal Rank Fusion (constant 60) over the top-10
@@ -391,7 +391,7 @@ BM25 weakness, parked until real user query examples exist to confirm it's an
 actual problem.
 
 <a id="generation--sea-lion-8b-settled"></a>
-### Generation, SEA-LION 8B (settled)
+### Generation, SEA-LION 8B
 
 `aisingapore/Llama-SEA-LION-v3-8B-IT`, chosen over `qwen3:8b` at the same parameter
 class specifically to isolate language specialization from model size. Generates
