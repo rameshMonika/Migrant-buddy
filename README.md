@@ -11,13 +11,6 @@ MOM documents, in whatever language the question was asked in.
 - [Architecture](#architecture)
 - [Prerequisites](#prerequisites)
   - [Configuration](#configuration)
-    - [Conversational memory backend](#conversational-memory-backend)
-    - [Retrieval caching](#retrieval-caching)
-    - [Rate limiting](#rate-limiting)
-    - [Speech-to-text](#speech-to-text)
-    - [Text-to-speech + avatar](#text-to-speech--avatar)
-    - [Streaming answers](#streaming-answers)
-    - [Observability (Langfuse)](#observability-langfuse)
 - [1. Backend setup](#1-backend-setup)
 - [2. Build the data (ingestion → chunking → embedding → indexing)](#2-build-the-data)
 - [3. Run the backend services](#3-run-the-backend-services)
@@ -34,6 +27,14 @@ MOM documents, in whatever language the question was asked in.
   - [Reranker comparison](#reranker-comparison)
   - [Generation model comparison](#generation-model-comparison)
 - [Project status](#project-status)
+- [Architectural decisions](#architectural-decisions)
+  - [Conversational memory backend](#conversational-memory-backend)
+  - [Retrieval caching](#retrieval-caching)
+  - [Rate limiting](#rate-limiting)
+  - [Speech-to-text](#speech-to-text)
+  - [Text-to-speech + avatar](#text-to-speech--avatar)
+  - [Streaming answers](#streaming-answers)
+  - [Observability (Langfuse)](#observability-langfuse)
 
 <a id="what-it-does"></a>
 ## What it does
@@ -170,107 +171,7 @@ etc. — is a fixed architecture decision, not meant to vary by environment):
 | `LIVEAVATAR_AVATAR_ID` | unset (required) | Which LiveAvatar avatar to render — from your LiveAvatar dashboard |
 | `MIGRANTBUDDY_LIVEAVATAR_API_URL` | `https://api.liveavatar.com` | LiveAvatar API base URL |
 | `MIGRANTBUDDY_LIVEAVATAR_IS_SANDBOX` | `true` | Sandbox mode — test without consuming LiveAvatar credits; turn off for a real end-to-end check |
-| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST` | unset (tracing off) | Enables Langfuse tracing when **all three** are set — see below |
-
-<a id="conversational-memory-backend"></a>
-#### Conversational memory backend
-
-Defaults to `memory` — LangGraph's built-in in-memory checkpointer, no external service,
-but conversations are lost on every server restart. Setting `MIGRANTBUDDY_CHECKPOINTER_BACKEND=redis`
-persists conversations across restarts, keyed by `thread_id`, with a TTL so idle
-conversations expire instead of growing Redis forever.
-
-Redis itself needs to be running somewhere first. Official Redis doesn't support Windows
-well; on Windows, [Memurai](https://www.memurai.com/) (free Developer Edition) is a
-Redis-API-compatible server that installs as a normal Windows service — no Docker, no
-WSL2. It listens on `localhost:6379` by default, matching `MIGRANTBUDDY_REDIS_URL`'s
-default.
-
-<a id="retrieval-caching"></a>
-#### Retrieval caching
-
-Off by default, separate toggle from the checkpointer (you may want one without the
-other). Setting `MIGRANTBUDDY_RETRIEVAL_CACHE_ENABLED=true` caches retrieval results in
-Redis keyed by (query, top_k) — safe with a long TTL since the corpus only changes on a
-deliberate re-ingestion, unlike conversation state. A Redis error or cache miss always
-falls back to computing retrieval fresh, and a stale cache entry (e.g. a chunk_id from
-before a re-ingestion) is detected and discarded rather than crashing — this cache is
-purely a latency optimization, never a correctness requirement.
-
-<a id="rate-limiting"></a>
-#### Rate limiting
-
-Off by default. Setting `MIGRANTBUDDY_RATE_LIMIT_ENABLED=true` limits `/chat` (only —
-`/health` is never limited) to `RATE_LIMIT_MAX_REQUESTS` requests per client IP per
-`RATE_LIMIT_WINDOW_SECONDS` (Redis, fixed-window `INCR`+`EXPIRE`), returning `429` once
-exceeded. This exists because Ollama/vLLM can't meaningfully serve concurrent requests
-(generation is CPU/GPU-bound) — an unbounded burst would otherwise just queue up and
-time out ugly instead of failing cleanly. Like the retrieval cache, this fails open: a
-Redis error allows the request through rather than locking everyone out.
-
-<a id="speech-to-text"></a>
-#### Speech-to-text
-
-Runs as its own service (`migrantbuddy.speech.main`, port 8002 by default), independent
-of the RAG service — see [Run the backend services](#3-run-the-backend-services) below. The 🎤 button next to the
-chat input opens a WebSocket directly to it (`/transcribe/ws`) and streams audio live as
-you speak (`faster-whisper`, multilingual — no language is pinned, so it auto-detects
-Burmese/Tamil/Thai/Vietnamese/etc.); transcribed text appears in the input box
-incrementally as each spoken segment is confirmed, for you to review and edit rather
-than auto-sent — transcription errors are common, and this app answers
-employment/legal-rights questions, where getting the question right matters.
-`MIGRANTBUDDY_WHISPER_MODEL_SIZE=small` by default, a balance of multilingual accuracy
-against CPU-only inference speed; bump it up if you have a GPU
-(`MIGRANTBUDDY_WHISPER_DEVICE=cuda`) or down if `small` is too slow.
-
-<a id="text-to-speech--avatar"></a>
-#### Text-to-speech + avatar
-
-Runs as its own service (`migrantbuddy.tts.main`, port 8003 by default), independent
-of the RAG and Whisper services. The avatar itself is rendered by
-[LiveAvatar](https://docs.liveavatar.com) (HeyGen ecosystem), **LITE mode**: LiveAvatar
-streams a real, WebRTC-based, lip-synced avatar video straight to the browser, but does
-no TTS of its own in this mode — we generate the audio ourselves with ElevenLabs and
-feed it in.
-
-Flow: the frontend calls `POST /session/start` once per conversation (lazily, on the
-first message sent — not on page load, since minting a session consumes LiveAvatar
-credits) to get a short-lived session token, then uses
-[`@heygen/liveavatar-web-sdk`](https://github.com/heygen-com/liveavatar-web-sdk)
-client-side to connect and attach the video stream. As the chat answer streams in (see
-below), the frontend buffers tokens into complete sentences and, for each one, calls
-`POST /speak` (ElevenLabs, non-streaming, 24kHz PCM — the rate LiveAvatar's audio
-ingest requires) and passes the resulting audio straight into the session's
-`repeatAudio()`, which LiveAvatar lip-syncs and renders server-side — no local viseme
-analysis on our end. A mute toggle next to the mic button skips voice output entirely,
-since both ElevenLabs and LiveAvatar are metered.
-
-**Requires two separate accounts**: `ELEVENLABS_API_KEY`/`ELEVENLABS_VOICE_ID` (audio
-generation) and `LIVEAVATAR_API_KEY`/`LIVEAVATAR_AVATAR_ID` (avatar rendering) — the
-service will fail on first use without all four.
-`MIGRANTBUDDY_LIVEAVATAR_IS_SANDBOX` defaults to `true` so local dev/testing doesn't
-burn LiveAvatar credits; turn it off for a real end-to-end check.
-
-<a id="streaming-answers"></a>
-#### Streaming answers
-
-`/chat` streams the answer back token-by-token (Server-Sent Events: `sources` once
-retrieval completes, then repeated `token` events, then `done`) rather than waiting
-for the full answer — reduces perceived latency since text (and, per above, audio)
-starts appearing well before generation finishes. This is the same event stream the
-TTS sentence-buffering logic in [Text-to-speech + avatar](#text-to-speech--avatar) reads from.
-
-<a id="observability-langfuse"></a>
-#### Observability (Langfuse)
-
-Tracing is opt-in and off by default. Setting `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`,
-and `LANGFUSE_HOST` (self-hosted or [Langfuse Cloud](https://cloud.langfuse.com)) turns on
-per-stage tracing — each retrieval stage (`dense`, `bm25_search`, `hybrid`, `rerank`) and
-each conversation node (`summarize`, `rewrite_query`, `retrieve`, `generate`) show up as
-timed, nested spans under a top-level trace for `ConversationService.answer()`, viewable
-in the Langfuse UI. Because this app can handle sensitive queries (e.g. workplace
-complaints), think about whether self-hosting Langfuse makes more sense than sending
-query text to a third-party cloud instance.
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_HOST` | unset (tracing off) | Enables Langfuse tracing when **all three** are set — see [Architectural decisions](#architectural-decisions) below |
 
 <a id="1-backend-setup"></a>
 ## 1. Backend setup
@@ -601,3 +502,106 @@ reranker, SEA-LION 8B generation) are settled and extracted into
 LangGraph conversation memory, and Docker Compose orchestration — is built and
 running; the Redis-backed checkpointer is written but not yet verified against a
 live instance, and CI/CD/production deploy haven't been set up yet.
+
+<a id="architectural-decisions"></a>
+## Architectural decisions
+
+<a id="conversational-memory-backend"></a>
+### Conversational memory backend
+
+Defaults to `memory` — LangGraph's built-in in-memory checkpointer, no external service,
+but conversations are lost on every server restart. Setting `MIGRANTBUDDY_CHECKPOINTER_BACKEND=redis`
+persists conversations across restarts, keyed by `thread_id`, with a TTL so idle
+conversations expire instead of growing Redis forever.
+
+Redis itself needs to be running somewhere first. Official Redis doesn't support Windows
+well; on Windows, [Memurai](https://www.memurai.com/) (free Developer Edition) is a
+Redis-API-compatible server that installs as a normal Windows service — no Docker, no
+WSL2. It listens on `localhost:6379` by default, matching `MIGRANTBUDDY_REDIS_URL`'s
+default.
+
+<a id="retrieval-caching"></a>
+### Retrieval caching
+
+Off by default, separate toggle from the checkpointer (you may want one without the
+other). Setting `MIGRANTBUDDY_RETRIEVAL_CACHE_ENABLED=true` caches retrieval results in
+Redis keyed by (query, top_k) — safe with a long TTL since the corpus only changes on a
+deliberate re-ingestion, unlike conversation state. A Redis error or cache miss always
+falls back to computing retrieval fresh, and a stale cache entry (e.g. a chunk_id from
+before a re-ingestion) is detected and discarded rather than crashing — this cache is
+purely a latency optimization, never a correctness requirement.
+
+<a id="rate-limiting"></a>
+### Rate limiting
+
+Off by default. Setting `MIGRANTBUDDY_RATE_LIMIT_ENABLED=true` limits `/chat` (only —
+`/health` is never limited) to `RATE_LIMIT_MAX_REQUESTS` requests per client IP per
+`RATE_LIMIT_WINDOW_SECONDS` (Redis, fixed-window `INCR`+`EXPIRE`), returning `429` once
+exceeded. This exists because Ollama/vLLM can't meaningfully serve concurrent requests
+(generation is CPU/GPU-bound) — an unbounded burst would otherwise just queue up and
+time out ugly instead of failing cleanly. Like the retrieval cache, this fails open: a
+Redis error allows the request through rather than locking everyone out.
+
+<a id="speech-to-text"></a>
+### Speech-to-text
+
+Runs as its own service (`migrantbuddy.speech.main`, port 8002 by default), independent
+of the RAG service — see [Run the backend services](#3-run-the-backend-services) above. The 🎤 button next to the
+chat input opens a WebSocket directly to it (`/transcribe/ws`) and streams audio live as
+you speak (`faster-whisper`, multilingual — no language is pinned, so it auto-detects
+Burmese/Tamil/Thai/Vietnamese/etc.); transcribed text appears in the input box
+incrementally as each spoken segment is confirmed, for you to review and edit rather
+than auto-sent — transcription errors are common, and this app answers
+employment/legal-rights questions, where getting the question right matters.
+`MIGRANTBUDDY_WHISPER_MODEL_SIZE=small` by default, a balance of multilingual accuracy
+against CPU-only inference speed; bump it up if you have a GPU
+(`MIGRANTBUDDY_WHISPER_DEVICE=cuda`) or down if `small` is too slow.
+
+<a id="text-to-speech--avatar"></a>
+### Text-to-speech + avatar
+
+Runs as its own service (`migrantbuddy.tts.main`, port 8003 by default), independent
+of the RAG and Whisper services. The avatar itself is rendered by
+[LiveAvatar](https://docs.liveavatar.com) (HeyGen ecosystem), **LITE mode**: LiveAvatar
+streams a real, WebRTC-based, lip-synced avatar video straight to the browser, but does
+no TTS of its own in this mode — we generate the audio ourselves with ElevenLabs and
+feed it in.
+
+Flow: the frontend calls `POST /session/start` once per conversation (lazily, on the
+first message sent — not on page load, since minting a session consumes LiveAvatar
+credits) to get a short-lived session token, then uses
+[`@heygen/liveavatar-web-sdk`](https://github.com/heygen-com/liveavatar-web-sdk)
+client-side to connect and attach the video stream. As the chat answer streams in (see
+below), the frontend buffers tokens into complete sentences and, for each one, calls
+`POST /speak` (ElevenLabs, non-streaming, 24kHz PCM — the rate LiveAvatar's audio
+ingest requires) and passes the resulting audio straight into the session's
+`repeatAudio()`, which LiveAvatar lip-syncs and renders server-side — no local viseme
+analysis on our end. A mute toggle next to the mic button skips voice output entirely,
+since both ElevenLabs and LiveAvatar are metered.
+
+**Requires two separate accounts**: `ELEVENLABS_API_KEY`/`ELEVENLABS_VOICE_ID` (audio
+generation) and `LIVEAVATAR_API_KEY`/`LIVEAVATAR_AVATAR_ID` (avatar rendering) — the
+service will fail on first use without all four.
+`MIGRANTBUDDY_LIVEAVATAR_IS_SANDBOX` defaults to `true` so local dev/testing doesn't
+burn LiveAvatar credits; turn it off for a real end-to-end check.
+
+<a id="streaming-answers"></a>
+### Streaming answers
+
+`/chat` streams the answer back token-by-token (Server-Sent Events: `sources` once
+retrieval completes, then repeated `token` events, then `done`) rather than waiting
+for the full answer — reduces perceived latency since text (and, per above, audio)
+starts appearing well before generation finishes. This is the same event stream the
+TTS sentence-buffering logic in [Text-to-speech + avatar](#text-to-speech--avatar) reads from.
+
+<a id="observability-langfuse"></a>
+### Observability (Langfuse)
+
+Tracing is opt-in and off by default. Setting `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`,
+and `LANGFUSE_HOST` (self-hosted or [Langfuse Cloud](https://cloud.langfuse.com)) turns on
+per-stage tracing — each retrieval stage (`dense`, `bm25_search`, `hybrid`, `rerank`) and
+each conversation node (`summarize`, `rewrite_query`, `retrieve`, `generate`) show up as
+timed, nested spans under a top-level trace for `ConversationService.answer()`, viewable
+in the Langfuse UI. Because this app can handle sensitive queries (e.g. workplace
+complaints), think about whether self-hosting Langfuse makes more sense than sending
+query text to a third-party cloud instance.
