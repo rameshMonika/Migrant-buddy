@@ -4,6 +4,10 @@ RAG system for Singapore migrant workers, answers employment questions (salary,
 working hours, work permits, medical insurance, contact info) grounded in official
 MOM documents, in whatever language the question was asked in.
 
+The experiments behind the model and retrieval choices live in
+[`notebooks/`](notebooks/); the full metrics comparison is in
+[`notebooks/FINDINGS.ipynb`](notebooks/FINDINGS.ipynb).
+
 ## Contents
 
 - [What it does](#what-it-does)
@@ -442,7 +446,8 @@ Every retrieval or prompt change that graduates out of a notebook carries a
 [Ragas](https://github.com/explodinggradients/ragas) run showing it didn't regress.
 Retrieval is scored on MRR/precision/recall/nDCG against a labeled (query,
 relevant-chunk) set; generation on faithfulness (groundedness to retrieved context)
-and answer relevancy, both judged by `llama3.1:8b`.
+and answer relevancy, both judged by `llama3.1:8b`. Full metrics and per-query
+breakdowns are in [`notebooks/FINDINGS.ipynb`](notebooks/FINDINGS.ipynb).
 
 <a id="reranker-comparison"></a>
 ### Reranker comparison
@@ -474,8 +479,8 @@ Why each strategy lands where it does:
 
 (Two numbers are unexplained rather than papered over: hybrid-no-rerank benchmarking
 faster than dense-only despite doing more work, and SEA-LION-E5 matching a
-cross-encoder's latency despite being a bi-encoder. See `notebooks/FINDINGS.ipynb`
-for the full run.)
+cross-encoder's latency despite being a bi-encoder. See
+[`notebooks/FINDINGS.ipynb`](notebooks/FINDINGS.ipynb) for the full run.)
 
 <a id="generation-model-comparison"></a>
 ### Generation model comparison
