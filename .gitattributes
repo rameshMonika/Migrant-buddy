@@ -1,2 +1,8 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Exclude Jupyter notebooks from GitHub language statistics
+# (they inflate the repo's detected primary language with embedded
+# JSON output/metadata; the real source is Python/TypeScript)
+*.ipynb linguist-vendored
+notebooks/** linguist-vendored
